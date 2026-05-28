@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arena Messenger</title>
+    <link rel="stylesheet" href="/styles.css?v=20260527c" />
+  </head>
+  <body data-theme="dark">
+    <script src="/encryption-client.js"></script>
+    <div id="toast" class="toast hidden"></div>
+
+    <section id="authScreen" class="screen auth-screen">
+      <div class="auth-card">
+        <div class="brand">AM</div>
+        <h1>Arena Messenger</h1>
+        <p>Мессенджер в стиле Telegram: личные чаты, группы, каналы, вложения и сообщения в реальном времени.</p>
+        <div class="auth-step">
+          <label>Телефон</label>
+          <input id="phoneInput" type="tel" placeholder="+79991234567" />
+        </div>
+        <div class="auth-step" style="display:flex; gap:8px;">
+          <a href="https://t.me/cod_arena_bot" target="_blank" class="primary-btn bot-link-btn" id="botLinkBtn">Перейти в бота и привязать номер</a>
+          <button id="requestCodeBtn" class="primary-btn">Получить код</button>
+        </div>
+        <div id="codeStep" class="hidden auth-step-group">
+          <div class="auth-step">
+            <label>Код</label>
+            <input id="codeInput" type="text" placeholder="123456" />
+          </div>
+          <div id="displayNameStep" class="auth-step hidden">
+            <label>Имя для регистрации</label>
+            <input id="displayNameInput" type="text" placeholder="Ваше имя" />
+            <p class="hint">Это поле показывается только для новых пользователей.</p>
+          </div>
+          <button id="loginBtn" class="primary-btn">Войти</button>
+          <p id="authModeHint" class="hint"></p>
+          <p id="devCodeHint" class="hint"></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="appScreen" class="screen hidden">
+      <div id="drawerOverlay" class="drawer-overlay hidden"></div>
+      <aside id="leftDrawer" class="left-drawer hidden">
+        <div class="drawer-profile">
+          <div id="drawerAvatar" class="drawer-avatar">AM</div>
+          <div class="drawer-user-meta">
+            <div id="drawerDisplayName" class="drawer-name"></div>
+            <div id="drawerPhone" class="drawer-phone"></div>
+            <div id="drawerUsername" class="drawer-username"></div>
+          </div>
+        </div>
+        <nav class="drawer-menu">
+          <button id="drawerProfileBtn" class="drawer-item">👤 Профиль</button>
+          <button id="drawerSettingsBtn" class="drawer-item">⚙️ Настройки</button>
+          <button id="drawerSavedBtn" class="drawer-item">💾 Saved Messages</button>
+          <button id="drawerSearchMessagesBtn" class="drawer-item">🔎 Поиск сообщений</button>
+          <button id="drawerFoldersBtn" class="drawer-item">📁 Папки чатов</button>
+          <button id="drawerModerationBtn" class="drawer-item hidden">🛡 Модерация</button>
+          <button id="drawerFavoritesBtn" class="drawer-item">⭐ Избранное</button>
+          <button id="drawerArchiveBtn" class="drawer-item">🗂 Архив</button>
+          <button id="drawerNewChatBtn" class="drawer-item">✉️ Новый диалог</button>
+          <button id="drawerNewGroupBtn" class="drawer-item">👥 Новая группа</button>
+          <button id="drawerNewChannelBtn" class="drawer-item">📢 Новый канал</button>
+          <button id="drawerLogoutBtn" class="drawer-item danger">🚪 Выйти</button>
+        </nav>
+      </aside>
+
+      <aside class="sidebar">
+        <header class="sidebar-header">
+          <div class="sidebar-head-row">
+            <button id="menuToggleBtn" class="icon-btn" title="Меню">☰</button>
+            <div class="sidebar-brand">
+              <div class="app-title">Arena Messenger</div>
+              <div id="profileSummary" class="muted"></div>
+            </div>
+            <button id="quickSettingsBtn" class="icon-btn" title="Настройки">⚙</button>
+          </div>
+          <div class="search-shell">
+            <span class="search-icon">⌕</span>
+            <input id="globalSearchInput" type="text" placeholder="Поиск чатов, пользователей и @username" />
+          </div>
+          <div id="chatFilters" class="chat-filters">
+            <button class="filter-chip active" data-filter="all">Все</button>
+            <button class="filter-chip" data-filter="favorite">Избранные</button>
+            <button class="filter-chip" data-filter="archive">Архив</button>
+          </div>
+        </header>
+
+        <div class="sidebar-actions">
+          <button id="newChatBtn" class="primary-btn small flex-btn">Диалог</button>
+          <button id="newGroupBtn" class="secondary-btn small flex-btn">Группа</button>
+          <button id="newChannelBtn" class="secondary-btn small flex-btn">Канал</button>
+        </div>
+
+        <div id="searchResults" class="search-results hidden"></div>
+        <div id="chatList" class="chat-list"></div>
+      </aside>
+
+      <main class="chat-panel">
+        <header id="chatHeader" class="chat-header empty">
+          <div class="chat-header-main">
+            <button id="mobileBackBtn" class="icon-btn hidden" title="Назад">←</button>
+            <button id="chatHeaderProfileBtn" class="chat-header-profile-btn">
+              <div id="chatHeaderAvatar" class="chat-header-avatar">AM</div>
+              <div>
+                <div class="chat-title">Выберите чат</div>
+                <div id="chatMeta" class="muted"></div>
+              </div>
+            </button>
+          </div>
+          <div class="chat-header-actions">
+            <div id="typingIndicator" class="muted"></div>
+            <button id="chatSearchBtn" class="icon-btn" title="Поиск по сообщениям">⌕</button>
+            <button id="bulkSelectBtn" class="icon-btn" title="Выбрать сообщения">☑</button>
+            <button id="chatInfoBtn" class="icon-btn hidden" title="Информация и настройки">⋮</button>
+          </div>
+        </header>
+
+        <div id="pinnedBar" class="pinned-bar hidden"></div>
+        <div id="selectionBar" class="selection-bar hidden"></div>
+        <div id="messageList" class="message-list empty-state">
+          <div class="placeholder">
+            <h2>Добро пожаловать</h2>
+            <p>Откройте существующий чат или создайте новый диалог в левом меню.</p>
+          </div>
+        </div>
+
+        <div id="replyBox" class="reply-box hidden"></div>
+        <div id="pendingFilesBar" class="pending-files-bar hidden"></div>
+
+        <input id="fileInput" type="file" multiple class="hidden" />
+        <form id="composer" class="composer hidden">
+          <div id="composerSideActions" class="composer-side-actions">
+            <button id="attachBtn" type="button" class="attach-box"><span>📎 Файлы</span></button>
+            <button id="emojiBtn" type="button" class="secondary-btn">😊 Emoji</button>
+            <button id="stickerBtn" type="button" class="secondary-btn">🧩 Стикеры</button>
+            <button id="recordVoiceBtn" type="button" class="secondary-btn voice-btn">🎤 Голосовое</button>
+          </div>
+          <button id="mobileToolsBtn" type="button" class="icon-btn mobile-tools-btn">＋</button>
+          <textarea id="messageInput" rows="1" placeholder="Введите сообщение..."></textarea>
+          <button id="sendBtn" type="submit" class="primary-btn">Отправить</button>
+        </form>
+        <div id="mobileToolsOverlay" class="mobile-tools-overlay hidden"></div>
+      </main>
+    </section>
+
+
+    <div id="imageViewer" class="image-viewer hidden">
+      <button id="closeImageViewerBtn" class="icon-btn image-viewer-close">✕</button>
+      <div id="imageViewerCount" class="image-viewer-count hidden"></div>
+      <button id="prevImageBtn" class="icon-btn image-viewer-nav prev hidden">‹</button>
+      <img id="imageViewerImg" class="image-viewer-img" alt="Просмотр изображения" />
+      <button id="nextImageBtn" class="icon-btn image-viewer-nav next hidden">›</button>
+      <div id="imageViewerCaption" class="image-viewer-caption"></div>
+    </div>
+
+
+    <div id="contextMenu" class="context-menu hidden"></div>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="modalTitle">Окно</h3>
+          <button id="closeModalBtn" class="icon-btn">✕</button>
+        </div>
+        <div id="modalBody"></div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js?v=20260527c"></script>
+  </body>
+</html>
