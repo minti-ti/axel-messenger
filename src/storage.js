@@ -127,6 +127,11 @@ function makeKey(folder, originalname = '', mimetype = '') {
   return `${safeFolder}/${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
 }
 
+
+function buildFileUrlFromKey(key = '') {
+  return `/files/${String(key || '').split('/').map((part) => encodeURIComponent(part)).join('/')}`;
+}
+
 // Для локального хранилища имя файла должно сохранять информацию о папке,
 // потому что мы складываем всё в один uploads/ без поддиректорий.
 // Это нужно для:
@@ -172,7 +177,7 @@ async function saveUpload(file, { folder = 'misc' } = {}) {
     }));
     return {
       key,
-      url: `/files/${encodeURIComponent(key)}`
+      url: buildFileUrlFromKey(key)
     };
   }
 
@@ -261,5 +266,6 @@ module.exports = {
   streamStoredFile,
   sanitizeStorageKey,
   isS3,
-  detectContentType
+  detectContentType,
+  buildFileUrlFromKey
 };
