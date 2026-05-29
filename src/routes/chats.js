@@ -122,25 +122,37 @@ function sanitizeInput(input) {
   return input.trim().substring(0, 1000);
 }
 
+/**
+ * Управление ключами server-side шифрования.
+ *
+ * ⚠️ ВАЖНО: Это SERVER-SIDE шифрование, НЕ end-to-end!
+ *
+ * Сервер генерирует и хранит ключи в таблице `encryption_keys`.
+ * Сервер расшифровывает сообщения при необходимости.
+ *
+ * Для приватных чатов (type = 'private') включаем AES-256-GCM шифрование контента.
+ * Для групп и каналов шифрование не используется (сообщения в открытом виде).
+ *
+ * @param {string} chatId - ID чата
+ * @param {string} chatType - 'private' | 'group' | 'channel'
+ * @returns {Promise<string|null>} hex-ключ или null для неприватных чатов
+ */
 async function ensureEncryptionKey(chatId, chatType) {
   if (chatType !== 'private') return null;
-  
+
   const existing = await query('SELECT key_data FROM encryption_keys WHERE chat_id = $1 ORDER BY version DESC LIMIT 1', [chatId]);
   if (existing.rows[0]) {
     return existing.rows[0].key_data;
   }
-  
+
   const newKey = generateEncryptionKey();
   await query(
     'INSERT INTO encryption_keys (id, chat_id, version, key_data, algorithm) VALUES ($1, $2, $3, $4, $5)',
     [uuidv4(), chatId, 1, newKey, 'AES-256-GCM']
   );
-  
+
   return newKey;
 }
-
-async function emitChatRefresh(app, chatId) {
-  const io = app.get('io');
   if (!io) return;
   const members = await query('SELECT user_id FROM chat_members WHERE chat_id = $1', [chatId]);
   for (const row of members.rows) {
@@ -1219,16 +1231,23 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
     const canCreateAlbum = files.length > 1 && files.every((file) => String(file.mimetype || '').startsWith('image/'));
     const albumId = canCreateAlbum ? uuidv4() : null;
 
-    // Получаем тип чата для проверки шифрования
+    // === SERVER-SIDE ENCRYPTION ===
+    // Шифруем контент сообщений для приватных чатов.
+    // ⚠️ Сервер имеет доступ к ключам и может расшифровать любое сообщение.
+    // ⚠️ Для настоящей приватности необходимо E2E (Signal Protocol).
+    //
     const chatResult = await query('SELECT type FROM chats WHERE id = $1', [chatId]);
     const chatType = chatResult.rows[0]?.type;
-    
-    // Для приватных чатов включаем шифрование
+
+    // Приватные чаты шифруются AES-256-GCM. Группы и каналы — открытый текст.
     let encryptionKey = null;
     const isEncrypted = chatType === 'private';
     if (isEncrypted) {
       encryptionKey = await ensureEncryptionKey(chatId, chatType);
       if (content) {
+        content = encryptMessage(content, encryptionKey);
+      }
+    }
         content = encryptMessage(content, encryptionKey);
       }
     }

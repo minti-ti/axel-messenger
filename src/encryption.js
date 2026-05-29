@@ -1,3 +1,26 @@
+/**
+ * ⚠️ ВАЖНО: Это НЕ end-to-end (E2E) шифрование!
+ *
+ * Данный модуль реализует SERVER-SIDE ENCRYPTION (шифрование на стороне сервера).
+ *
+ * Принцип работы:
+ * 1. Ключ генерируется на СЕРВЕРЕ (не на клиенте)
+ * 2. Ключ ХРАНИТСЯ на сервере в таблице `encryption_keys`
+ * 3. Сервер расшифровывает сообщения для рендеринга
+ *
+ * Это означает:
+ * - ⚠️ Администратор сервера может прочитать любые сообщения
+ * - ⚠️ При взломе/утечке дампа БД злоумышленник получит и ключи, и шифротекст
+ * - ⚠️ Это защита от случайного доступа (at-rest encryption), а не приватная переписка
+ *
+ * Для настоящего E2E шифрования (как в Signal/Telegram) необходима:
+ * - Генерация ключей на клиенте
+ * - Обмен публичными ключами между участниками
+ * - Signal Protocol или аналог (X3DH + Double Ratchet)
+ *
+ * @module encryption
+ */
+
 const crypto = require('crypto');
 
 // Алгоритм шифрования: AES-256-GCM
@@ -7,17 +30,23 @@ const IV_SIZE = 16; // 128 bits
 const AUTH_TAG_SIZE = 16; // 128 bits
 
 /**
- * Генерирует новый ключ шифрования для приватного чата
+ * Генерирует новый ключ шифрования для приватного чата.
+ * ⚠️ Ключ генерируется на СЕРВЕРЕ — это компромисс между безопасностью и удобством.
+ *
+ * @returns {string} 64-символьный hex-ключ (256 бит)
  */
 function generateEncryptionKey() {
   return crypto.randomBytes(ENCRYPTION_KEY_SIZE).toString('hex');
 }
 
 /**
- * Шифрует текст сообщения
+ * Шифрует текст сообщения.
+ * ⚠️ Шифрование выполняется на сервере. Ключ доступен серверу.
+ *
  * @param {string} plaintext - текст для шифрования
- * @param {string} key - ключ шифрования (hex string)
+ * @param {string} key - ключ шифрования (64-символьный hex string, 256 бит)
  * @returns {string} зашифрованный текст (IV + ciphertext + authTag, все в hex)
+ * @throws {Error} если plaintext или key не предоставлены, или key неверной длины
  */
 function encryptMessage(plaintext, key) {
   if (!plaintext || !key) {
@@ -37,15 +66,19 @@ function encryptMessage(plaintext, key) {
 
   const authTag = cipher.getAuthTag();
 
-  // Формат: IV(32) + authTag(32) + ciphertext(hex)
+  // Формат: IV(32 hex) + authTag(32 hex) + ciphertext(hex)
+  // Это обеспечивает целостность данных (authenticated encryption)
   return iv.toString('hex') + authTag.toString('hex') + encrypted;
 }
 
 /**
- * Расшифровывает текст сообщения
- * @param {string} encrypted - зашифрованный текст (IV + authTag + ciphertext)
- * @param {string} key - ключ шифрования (hex string)
+ * Расшифровывает текст сообщения.
+ * ⚠️ Расшифровка выполняется на сервере. Ключ доступен серверу.
+ *
+ * @param {string} encrypted - зашифрованный текст (IV + authTag + ciphertext в hex)
+ * @param {string} key - ключ шифрования (64-символьный hex string, 256 бит)
  * @returns {string} расшифрованный текст
+ * @throws {Error} если encrypted или key не предоставлены, или данные повреждены
  */
 function decryptMessage(encrypted, key) {
   if (!encrypted || !key) {
@@ -57,7 +90,7 @@ function decryptMessage(encrypted, key) {
     throw new Error(`Key must be ${ENCRYPTION_KEY_SIZE} bytes`);
   }
 
-  // Извлекаем компоненты
+  // Извлекаем компоненты из hex-строки
   const ivHex = encrypted.substring(0, IV_SIZE * 2); // IV в hex = 32 символа
   const authTagHex = encrypted.substring(IV_SIZE * 2, IV_SIZE * 2 + AUTH_TAG_SIZE * 2);
   const ciphertext = encrypted.substring(IV_SIZE * 2 + AUTH_TAG_SIZE * 2);
@@ -75,7 +108,9 @@ function decryptMessage(encrypted, key) {
 }
 
 /**
- * Безопасно затирает данные из памяти
+ * Безопасно затирает данные из памяти.
+ * ⚠️ JavaScript не гарантирует полного удаления данных из памяти.
+ *
  * @param {Buffer} buffer - буфер для затирания
  */
 function scrubBuffer(buffer) {
@@ -85,7 +120,11 @@ function scrubBuffer(buffer) {
 }
 
 /**
- * Генерирует хеш для проверки целостности
+ * Генерирует хеш для проверки целостности сообщения.
+ * Используется для обнаружения изменений контента.
+ *
+ * @param {string} plaintext - текст сообщения
+ * @returns {string} SHA-256 хеш в hex
  */
 function hashMessage(plaintext) {
   return crypto
@@ -95,7 +134,11 @@ function hashMessage(plaintext) {
 }
 
 /**
- * Проверяет целостность сообщения
+ * Проверяет целостность сообщения по хешу.
+ *
+ * @param {string} plaintext - текст сообщения
+ * @param {string} hash - ожидаемый SHA-256 хеш
+ * @returns {boolean} true если хеш совпадает
  */
 function verifyMessageHash(plaintext, hash) {
   const computedHash = hashMessage(plaintext);

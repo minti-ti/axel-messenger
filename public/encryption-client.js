@@ -1,8 +1,22 @@
 /**
- * Клиентская часть шифрования
- * Расшифровывает сообщения полученные с сервера
+ * ⚠️ ВАЖНО: Клиентская часть SERVER-SIDE шифрования.
+ *
+ * Это НЕ end-to-end (E2E) шифрование!
+ *
+ * Данный модуль выполняет РАСШИФРОВКУ сообщений на стороне клиента.
+ * Ключи передаются с сервера — сервер имеет доступ к расшифрованным данным.
+ *
+ * При настоящем E2E:
+ * - Ключи генерируются на клиенте
+ * - Сервер видит только зашифрованные данные
+ * - Расшифровка выполняется исключительно на клиенте
+ *
+ * @module encryption-client
  */
 
+/**
+ * Криптографические операции с использованием Web Crypto API.
+ */
 const CryptoEncryption = (() => {
   const ALGORITHM = 'AES-GCM';
   const IV_SIZE = 16; // bytes
@@ -29,7 +43,8 @@ const CryptoEncryption = (() => {
   }
 
   /**
-   * Импортирует hex-ключ как CryptoKey для WebCrypto API
+   * Импортирует hex-ключ как CryptoKey для WebCrypto API.
+   * @param {string} hexKey - 64-символьный hex-ключ (256 бит)
    */
   async function importKey(hexKey) {
     const keyBytes = hexToBytes(hexKey);
@@ -37,12 +52,16 @@ const CryptoEncryption = (() => {
   }
 
   /**
-   * Расшифровывает сообщение
-   * Формат: IV(32 hex chars) + AuthTag(32 hex chars) + Ciphertext(hex)
+   * Расшифровывает сообщение, зашифрованное сервером.
+   * Формат: IV(32 hex) + AuthTag(32 hex) + Ciphertext(hex)
+   *
+   * @param {string} encryptedHex - зашифрованное сообщение в hex
+   * @param {string} keyHex - ключ расшифровки в hex (256 бит)
+   * @returns {Promise<string>} расшифрованный текст
    */
   async function decrypt(encryptedHex, keyHex) {
     try {
-      // Извлекаем компоненты
+      // Извлекаем компоненты из hex-строки
       const ivHex = encryptedHex.substring(0, IV_SIZE * 2);
       const authTagHex = encryptedHex.substring(IV_SIZE * 2, IV_SIZE * 2 + AUTH_TAG_SIZE * 2);
       const ciphertextHex = encryptedHex.substring(IV_SIZE * 2 + AUTH_TAG_SIZE * 2);
@@ -79,13 +98,14 @@ const CryptoEncryption = (() => {
   }
 
   /**
-   * Шифрует сообщение (для отправки с клиента, если нужно)
+   * Шифрует сообщение (для отправки с клиента).
+   * ⚠️ В текущей архитектуре сервер шифрует сам — этот метод для совместимости.
    */
   async function encrypt(plaintext, keyHex) {
     try {
       const key = await importKey(keyHex);
       const iv = window.crypto.getRandomValues(new Uint8Array(IV_SIZE));
-      
+
       const encoder = new TextEncoder();
       const data = encoder.encode(plaintext);
 

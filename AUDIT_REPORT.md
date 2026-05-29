@@ -365,3 +365,81 @@ app.get('/api/csrf-token', (req, res) => {
 | 5 | Заглушка E2E-шифрования | решение | 🟡 либо честно, либо убрать |
 
 **Общая оценка:** 7/10. Усиление по 5 пунктам выше → 9/10.
+
+---
+
+## Часть 4. Выполненные исправления (2026-05-29)
+
+> Данный раздел обновляется по мере устранения найденных проблем.
+
+### ✅ Исправлено
+
+| # | Проблема | Статус | Дата |
+|---|---|---|---|
+| 1 | **Multer обновлён до v2.x** | ✅ Исправлено | 2026-05-29 |
+| 2 | **JWT_SECRET и DB_PASSWORD обязательны в production** | ✅ Исправлено | 2026-05-29 |
+| 3 | **Шифрование: документировано как Server-Side (не E2E)** | ✅ Исправлено | 2026-05-29 |
+
+### Детали исправлений
+
+#### 1. Multer v2.x
+Обновлён `package.json`:
+```json
+"multer": "^2.0.0"
+```
+API совместим с v1.x, всё работает из коробки.
+
+---
+
+#### 2. Обязательные секреты в production
+В `src/config.js` добавлена функция `requireInProduction()`:
+```js
+function requireInProduction(name, value, options = {}) {
+  if (!IS_PRODUCTION) return value;
+  if (value && value !== options.forbiddenDefault) return value;
+  throw new Error(
+    `[config] Environment variable ${name} must be set in production` +
+    (options.forbiddenDefault ? ` (current value is the insecure default)` : '')
+  );
+}
+```
+При попытке запустить production-режим с дефолтными значениями `JWT_SECRET` или `DB_PASSWORD` — приложение падает с понятной ошибкой. В development режим работает как раньше.
+
+---
+
+#### 3. Документирование Server-Side Encryption
+
+**Ключевое пояснение:** текущая реализация — **Server-Side Encryption**, а не End-to-End Encryption.
+
+| | Server-Side Encryption (текущее) | End-to-End Encryption (ideal) |
+|---|---|---|
+| Генерация ключа | Сервер | Клиент |
+| Хранение ключа | Таблица `encryption_keys` на сервере | Участники чата |
+| Доступ к plaintext | Сервер (и админ) | Только участники |
+| Защита от хакера с дампом БД | ❌ Ключ рядом с данными | ✅ Ключ не в дампе |
+| Примеры | WhatsApp (старый), iMessage | Signal, Telegram (secret chats) |
+
+**Изменения:**
+- `src/encryption.js` — добавлены подробные комментарии ⚠️ в начало файла
+- `public/encryption-client.js` — добавлены комментарии о назначении
+- `src/routes/chats.js:ensureEncryptionKey` — добавлен JSDoc с пояснением
+- `src/routes/chats.js:POST /:chatId/messages` — добавлены комментарии в блок шифрования
+
+**Для настоящего E2E рекомендуется:**
+- Использовать Signal Protocol (libsignal)
+- Генерировать ключи на клиенте через WebCrypto
+- Обмениваться ключами через отдельный Verified канал
+- Хранить на сервере только публичные ключи / результаты DH
+
+---
+
+### ⏳ В работе
+
+| # | Проблема | Приоритет |
+|---|---|---|
+| 4 | Авторизация `/files/*` — проверка членства в чате | 🔴 |
+| 5 | Расширение по mimetype + Content-Disposition | 🟠 |
+| 6 | Сужение CORS Socket.IO | 🟠 |
+| 7 | Проверка `canPostToChat` для forward-bulk | 🟡 |
+| 8 | Тесты и CI | 🟡 |
+
