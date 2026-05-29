@@ -223,6 +223,13 @@ ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS phone_visibility TEXT NOT NUL
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS last_seen_visibility TEXT NOT NULL DEFAULT 'everyone';
 ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS allow_username_lookup BOOLEAN NOT NULL DEFAULT TRUE;
 
+CREATE TABLE IF NOT EXISTS telegram_bindings (
+  phone TEXT PRIMARY KEY,
+  telegram_chat_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_chat_members_user_id ON chat_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_chat_id_created_at ON messages(chat_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);

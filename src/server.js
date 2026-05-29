@@ -4,31 +4,41 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { Server } = require('socket.io');
-const crypto = require('crypto');
 const config = require('./config');
 const { initDb, query } = require('./db');
+const { authMiddleware } = require('./auth');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const chatRoutes = require('./routes/chats');
 const publicRoutes = require('./routes/public');
 const { attachSocket } = require('./socket');
 const { formatMessage, listChats } = require('./chatService');
-const { streamStoredFile, isS3 } = require('./storage');
+const { streamStoredFile, sanitizeStorageKey } = require('./storage');
 const { handleTelegramWebhook, setupWebhook } = require('./telegramBot');
 
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 const server = http.createServer(app);
+
+// CORS для Socket.IO. В production пускаем только наш фронтенд (config.appUrl),
+// в dev — разрешаем localhost/любой origin для удобства.
+const socketCorsOrigin = config.isProduction
+  ? [config.appUrl]
+  : true; // в dev — отражаем Origin запроса
+
 const io = new Server(server, {
-  cors: { origin: '*' },
+  cors: {
+    origin: socketCorsOrigin,
+    credentials: true
+  },
   maxHttpBufferSize: 25 * 1024 * 1024
 });
 
 app.set('io', io);
 attachSocket(io);
 
-if (config.nodeEnv === 'production') {
+if (config.isProduction) {
   app.use(helmet({
     crossOriginEmbedderPolicy: false,
     contentSecurityPolicy: {
@@ -62,27 +72,20 @@ if (config.nodeEnv === 'production') {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware для безопасности запросов
+// Дополнительные security headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (config.isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
   next();
-});
-
-// CSRF токен для UI
-app.get('/api/csrf-token', (req, res) => {
-  const token = crypto.randomBytes(32).toString('hex');
-  req.session = req.session || {};
-  req.session.csrfToken = token;
-  res.json({ csrfToken: token });
 });
 
 function sendPublicAsset(res, filename, type) {
   res.type(type);
-  if (config.nodeEnv !== 'production') res.setHeader('Cache-Control', 'no-store');
+  if (!config.isProduction) res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(path.join(process.cwd(), 'public', filename));
 }
 
@@ -90,28 +93,80 @@ app.get('/styles.css', (_, res) => sendPublicAsset(res, 'styles.css', 'text/css'
 app.get('/app.js', (_, res) => sendPublicAsset(res, 'app.js', 'application/javascript'));
 app.get('/public-profile.js', (_, res) => sendPublicAsset(res, 'public-profile.js', 'application/javascript'));
 app.get('/public-chat.js', (_, res) => sendPublicAsset(res, 'public-chat.js', 'application/javascript'));
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads'), {
-  setHeaders: (res) => {
-    if (config.nodeEnv !== 'production') res.setHeader('Cache-Control', 'no-store');
+
+// ---- Авторизованные раздачи файлов ----
+// Раньше /uploads/* и /files/* были полностью публичны, что позволяло
+// скачать любое вложение, зная имя файла. Теперь оба требуют:
+//   1) валидный JWT (authMiddleware)
+//   2) членство в чате, к которому привязано сообщение с этим вложением.
+
+async function userCanAccessAttachment(userId, attachmentPath) {
+  if (!userId || !attachmentPath) return false;
+
+  // Аватары пользователей и чатов считаем публичным контентом (они и так видны в UI без авторизации),
+  // но всё равно требуем валидную сессию через authMiddleware выше.
+  if (attachmentPath.includes('avatar') || attachmentPath.includes('chat-avatars')) {
+    return true;
   }
-}));
+
+  // Ищем хотя бы одно сообщение, чьё attachment_url содержит наш путь, в чате где юзер — участник.
+  const result = await query(
+    `SELECT 1
+     FROM messages m
+     JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = $2
+     WHERE m.attachment_url LIKE $1
+     LIMIT 1`,
+    [`%${attachmentPath}%`, userId]
+  );
+  return Boolean(result.rows[0]);
+}
+
+const uploadsRouter = express.Router();
+uploadsRouter.use(authMiddleware);
+uploadsRouter.get('/:filename', async (req, res) => {
+  try {
+    const filename = sanitizeStorageKey(req.params.filename);
+    const fullPath = `/uploads/${filename}`;
+    const allowed = await userCanAccessAttachment(req.user.id, fullPath);
+    if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    await streamStoredFile(filename, res);
+  } catch (error) {
+    if (error.message === 'Invalid key' || error.message === 'Empty key') {
+      return res.status(400).json({ error: 'Некорректное имя файла' });
+    }
+    console.error('uploads error:', error.message);
+    res.status(500).json({ error: 'Не удалось отдать файл' });
+  }
+});
+app.use('/uploads', uploadsRouter);
+
+const filesRouter = express.Router();
+filesRouter.use(authMiddleware);
+filesRouter.get('/*', async (req, res) => {
+  try {
+    const rawKey = decodeURIComponent(String(req.params[0] || ''));
+    const fullPath = `/files/${rawKey}`;
+    const allowed = await userCanAccessAttachment(req.user.id, fullPath);
+    if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    await streamStoredFile(rawKey, res);
+  } catch (error) {
+    if (error.message === 'Invalid key' || error.message === 'Empty key') {
+      return res.status(400).json({ error: 'Некорректное имя файла' });
+    }
+    console.error('files error:', error.message);
+    res.status(500).json({ error: 'Не удалось отдать файл' });
+  }
+});
+app.use('/files', filesRouter);
+
 app.use(express.static(path.join(process.cwd(), 'public'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
     if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     if (filePath.endsWith('.html')) res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    if (config.nodeEnv !== 'production') res.setHeader('Cache-Control', 'no-store');
+    if (!config.isProduction) res.setHeader('Cache-Control', 'no-store');
   }
 }));
-app.get('/files/*', async (req, res) => {
-  try {
-    const key = decodeURIComponent(String(req.params[0] || ''));
-    await streamStoredFile(key, res);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Не удалось отдать файл' });
-  }
-});
 
 const authLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -122,14 +177,6 @@ const authLimiter = rateLimit({
   skip: (req) => req.path === '/api/health'
 });
 
-const sensitiveOpLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Слишком много операций. Подождите минуту.' }
-});
-
 const messageLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 60,
@@ -138,11 +185,6 @@ const messageLimiter = rateLimit({
   message: { error: 'Слишком много сообщений. Подождите.' }
 });
 
-app.get('/api/health', (_, res) => {
-  res.json({ ok: true, env: config.nodeEnv, now: new Date().toISOString() });
-});
-
-app.use('/api/public', publicRoutes);
 const apiLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
   max: 300,
@@ -150,10 +192,16 @@ const apiLimiter = rateLimit({
   legacyHeaders: false
 });
 
+app.get('/api/health', (_, res) => {
+  res.json({ ok: true, env: config.nodeEnv, now: new Date().toISOString() });
+});
+
+app.use('/api/public', publicRoutes);
+
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', apiLimiter, userRoutes);
 
-// Применяем rate limiting для критических операций в чатах
+// Rate limiting для критических операций в чатах
 app.use('/api/chats', apiLimiter);
 app.post('/api/chats/:chatId/messages', messageLimiter, chatRoutes);
 app.use('/api/chats', chatRoutes);

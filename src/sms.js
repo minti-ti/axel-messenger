@@ -1,4 +1,5 @@
 const config = require('./config');
+const { query } = require('./db');
 
 async function sendLoginCode(phone, code) {
   // 1. Try to send via Telegram if a bot token is configured and not placeholder
@@ -16,7 +17,11 @@ async function sendLoginCode(phone, code) {
 
   // 2. Dev mode – only if explicitly allowed via env var
   if (config.allowDevCodeResponse) {
-    console.log(`[DEV OTP] ${phone}: ${code}`);
+    // Не логируем сам код в продовых логах. allowDevCodeResponse=true должен быть
+    // выставлен только в dev/staging, и только там реально появится в консоли.
+    if (!config.isProduction) {
+      console.log(`[DEV OTP] ${phone}: ${code}`);
+    }
     return { mode: 'dev' };
   }
 
@@ -27,7 +32,7 @@ async function sendLoginCode(phone, code) {
 async function sendTelegramMessage(phone, message) {
   const { botToken } = config.telegram;
   const chatId = await findChatIdByPhone(phone);
-  if (!chatId) throw new Error(`User ${phone} not found. Send /start +79991234567 to the bot first.`);
+  if (!chatId) throw new Error(`User not found. Send /start to the bot first.`);
 
   const https = require('https');
   const data = JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML' });
@@ -42,9 +47,13 @@ async function sendTelegramMessage(phone, message) {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
-        const response = JSON.parse(body);
-        if (response.ok) resolve(response);
-        else reject(new Error(response.description || 'Telegram API error'));
+        try {
+          const response = JSON.parse(body);
+          if (response.ok) resolve(response);
+          else reject(new Error(response.description || 'Telegram API error'));
+        } catch (e) {
+          reject(new Error('Invalid Telegram response'));
+        }
       });
     });
     req.on('error', reject);
@@ -53,10 +62,30 @@ async function sendTelegramMessage(phone, message) {
   });
 }
 
-const phoneToChatId = new Map();
-function registerTelegramUser(phone, chatId) { phoneToChatId.set(phone, String(chatId)); }
-function findChatIdByPhone(phone) {
-  const normalized = phone.replace(/^\+/, '');
-  return phoneToChatId.get(normalized) || null;
+function normalizePhoneForLookup(phone) {
+  return String(phone || '').replace(/^\+/, '').replace(/\D/g, '');
 }
+
+async function registerTelegramUser(phone, chatId) {
+  const normalized = normalizePhoneForLookup(phone);
+  if (!normalized || !chatId) return;
+  await query(
+    `INSERT INTO telegram_bindings (phone, telegram_chat_id, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (phone)
+     DO UPDATE SET telegram_chat_id = EXCLUDED.telegram_chat_id, updated_at = NOW()`,
+    [normalized, String(chatId)]
+  );
+}
+
+async function findChatIdByPhone(phone) {
+  const normalized = normalizePhoneForLookup(phone);
+  if (!normalized) return null;
+  const result = await query(
+    'SELECT telegram_chat_id FROM telegram_bindings WHERE phone = $1 LIMIT 1',
+    [normalized]
+  );
+  return result.rows[0]?.telegram_chat_id || null;
+}
+
 module.exports = { sendLoginCode, registerTelegramUser, findChatIdByPhone };
