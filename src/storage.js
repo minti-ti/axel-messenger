@@ -1,9 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const crypto = require('crypto');
 const { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand } = require('@aws-sdk/client-s3');
 const config = require('./config');
 
 const isS3 = config.storage.mode === 's3';
+const isB2Native = config.storage.mode === 'b2';
 const isBackblazeB2 = /backblazeb2\.com/i.test(String(config.storage.endpoint || ''));
 
 let s3 = null;
@@ -21,6 +24,134 @@ if (isS3) {
       secretAccessKey: config.storage.secretAccessKey
     }
   });
+}
+
+
+let b2AuthCache = null;
+let b2BucketCache = null;
+let b2UploadUrlCache = null;
+
+function b2BasicAuthHeader() {
+  const raw = `${config.storage.accessKeyId}:${config.storage.secretAccessKey}`;
+  return `Basic ${Buffer.from(raw).toString('base64')}`;
+}
+
+function encodeB2FileNameHeader(value = '') {
+  return encodeURIComponent(String(value || ''));
+}
+
+function encodeB2FileNamePath(value = '') {
+  return String(value || '').split('/').map((part) => encodeURIComponent(part)).join('/');
+}
+
+function doHttpsRequest(urlString, { method = 'GET', headers = {}, body = null, responseType = 'json' } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(urlString);
+    const req = https.request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || undefined,
+      path: `${url.pathname}${url.search}`,
+      method,
+      headers
+    }, (res) => {
+      if (responseType === 'stream') {
+        if ((res.statusCode || 500) >= 400) {
+          const chunks = [];
+          res.on('data', (chunk) => chunks.push(chunk));
+          res.on('end', () => {
+            const raw = Buffer.concat(chunks).toString('utf8');
+            const err = new Error(raw || `HTTP ${res.statusCode}`);
+            err.statusCode = res.statusCode || 500;
+            reject(err);
+          });
+          return;
+        }
+        resolve(res);
+        return;
+      }
+
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        const isJson = String(res.headers['content-type'] || '').includes('application/json');
+        const data = raw ? (isJson ? JSON.parse(raw) : raw) : {};
+        if ((res.statusCode || 500) >= 400) {
+          const err = new Error(data.message || data.code || raw || `HTTP ${res.statusCode}`);
+          err.statusCode = res.statusCode || 500;
+          err.code = data.code;
+          err.payload = data;
+          reject(err);
+          return;
+        }
+        resolve({ statusCode: res.statusCode || 200, headers: res.headers, data });
+      });
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+function clearB2Caches() {
+  b2AuthCache = null;
+  b2BucketCache = null;
+  b2UploadUrlCache = null;
+}
+
+async function b2Authorize(force = false) {
+  if (!isB2Native) throw new Error('B2 native storage is not enabled');
+  if (b2AuthCache && !force) return b2AuthCache;
+  const response = await doHttpsRequest('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
+    method: 'GET',
+    headers: {
+      Authorization: b2BasicAuthHeader()
+    }
+  });
+  b2AuthCache = response.data;
+  return b2AuthCache;
+}
+
+async function b2ResolveBucket(force = false) {
+  if (b2BucketCache && !force) return b2BucketCache;
+  const auth = await b2Authorize(force);
+
+  if (auth.allowed?.bucketName && auth.allowed?.bucketId) {
+    b2BucketCache = { id: auth.allowed.bucketId, name: auth.allowed.bucketName };
+    return b2BucketCache;
+  }
+
+  const response = await doHttpsRequest(`${auth.apiUrl}/b2api/v2/b2_list_buckets`, {
+    method: 'POST',
+    headers: {
+      Authorization: auth.authorizationToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ accountId: auth.accountId })
+  });
+  const bucket = (response.data.buckets || []).find((item) => item.bucketName === config.storage.bucket);
+  if (!bucket) {
+    throw new Error(`B2 bucket not found: ${config.storage.bucket}`);
+  }
+  b2BucketCache = { id: bucket.bucketId, name: bucket.bucketName };
+  return b2BucketCache;
+}
+
+async function b2GetUploadUrl(force = false) {
+  if (b2UploadUrlCache && !force) return b2UploadUrlCache;
+  const auth = await b2Authorize(force);
+  const bucket = await b2ResolveBucket(force);
+  const response = await doHttpsRequest(`${auth.apiUrl}/b2api/v2/b2_get_upload_url`, {
+    method: 'POST',
+    headers: {
+      Authorization: auth.authorizationToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ bucketId: bucket.id })
+  });
+  b2UploadUrlCache = response.data;
+  return b2UploadUrlCache;
 }
 
 function ensureLocalDir() {
@@ -177,6 +308,38 @@ async function ensureS3Bucket() {
 
 async function saveUpload(file, { folder = 'misc' } = {}) {
   const key = makeKey(folder, file.originalname, file.mimetype);
+
+  if (isB2Native) {
+    const sha1 = crypto.createHash('sha1').update(file.buffer).digest('hex');
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const bucket = await b2ResolveBucket(attempt > 0);
+        const upload = await b2GetUploadUrl(attempt > 0);
+        await doHttpsRequest(upload.uploadUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: upload.authorizationToken,
+            'Content-Type': file.mimetype || 'b2/x-auto',
+            'Content-Length': String(file.buffer.length),
+            'X-Bz-File-Name': encodeB2FileNameHeader(key),
+            'X-Bz-Content-Sha1': sha1
+          },
+          body: file.buffer,
+          responseType: 'json'
+        });
+        return {
+          key,
+          bucketName: bucket.name,
+          url: buildFileUrlFromKey(key)
+        };
+      } catch (error) {
+        b2UploadUrlCache = null;
+        if (attempt === 1) throw error;
+      }
+    }
+  }
+
   if (isS3) {
     await ensureS3Bucket();
     await s3.send(new PutObjectCommand({
@@ -217,6 +380,39 @@ function sanitizeStorageKey(rawKey) {
 }
 
 async function streamStoredFile(key, res) {
+  if (isB2Native) {
+    const auth = await b2Authorize();
+    const bucket = await b2ResolveBucket();
+    const filename = path.basename(String(key || 'file'));
+    const url = `${auth.downloadUrl}/file/${encodeURIComponent(bucket.name)}/${encodeB2FileNamePath(key)}`;
+    try {
+      const response = await doHttpsRequest(url, {
+        method: 'GET',
+        headers: {
+          Authorization: auth.authorizationToken
+        },
+        responseType: 'stream'
+      });
+      const dangerousInline = isDangerousInlineType(filename, response.headers['content-type']);
+      const fallbackType = detectContentType(filename);
+      const contentType = dangerousInline ? 'application/octet-stream' : (response.headers['content-type'] || fallbackType);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Content-Disposition', contentDispositionHeader(filename, !dangerousInline));
+      response.pipe(res);
+      return;
+    } catch (error) {
+      if (error.statusCode === 401 || error.code === 'expired_auth_token') {
+        clearB2Caches();
+      }
+      if (error.statusCode === 404) {
+        res.status(404).json({ error: 'Файл не найден' });
+        return;
+      }
+      throw error;
+    }
+  }
+
   if (isS3) {
     let object;
     try {
@@ -277,6 +473,7 @@ module.exports = {
   streamStoredFile,
   sanitizeStorageKey,
   isS3,
+  isB2Native,
   detectContentType,
   buildFileUrlFromKey
 };

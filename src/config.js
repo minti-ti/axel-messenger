@@ -58,7 +58,7 @@ module.exports = {
     botUsername: process.env.TELEGRAM_BOT_USERNAME || ''
   },
   storage: {
-    mode: process.env.STORAGE_MODE || 'local',
+    mode: process.env.STORAGE_MODE || 'local', // local | s3 | b2
     bucket: process.env.S3_BUCKET || '',
     region: process.env.S3_REGION || 'us-east-1',
     endpoint: process.env.S3_ENDPOINT || undefined,
