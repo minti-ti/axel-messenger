@@ -13,7 +13,7 @@ const chatRoutes = require('./routes/chats');
 const publicRoutes = require('./routes/public');
 const { attachSocket } = require('./socket');
 const { formatMessage, listChats } = require('./chatService');
-const { streamStoredFile, sanitizeStorageKey } = require('./storage');
+const { streamStoredFile, sanitizeStorageKey, buildFileUrlFromKey } = require('./storage');
 const { handleTelegramWebhook, setupWebhook } = require('./telegramBot');
 
 const app = express();
@@ -109,14 +109,22 @@ function isPublicAvatarPath(p) {
 
 async function userCanAccessAttachment(userId, attachmentPath) {
   if (!userId || !attachmentPath) return false;
-  // Ищем хотя бы одно сообщение, чьё attachment_url содержит наш путь, в чате где юзер — участник.
+
+  const normalizedCandidates = new Set([attachmentPath]);
+  if (attachmentPath.startsWith('/files/')) {
+    const rawKey = attachmentPath.slice('/files/'.length);
+    normalizedCandidates.add(buildFileUrlFromKey(rawKey));
+    normalizedCandidates.add(`/files/${encodeURIComponent(rawKey)}`); // legacy-формат старых сообщений
+  }
+
+  const candidates = Array.from(normalizedCandidates);
   const result = await query(
     `SELECT 1
      FROM messages m
      JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = $2
-     WHERE m.attachment_url LIKE $1
+     WHERE m.attachment_url = ANY($1::text[])
      LIMIT 1`,
-    [`%${attachmentPath}%`, userId]
+    [candidates, userId]
   );
   return Boolean(result.rows[0]);
 }

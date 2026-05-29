@@ -1429,3 +1429,150 @@ body { overscroll-behavior: contain; }
     -webkit-overflow-scrolling: touch;
   }
 }
+
+
+/* ========================================================================
+   HOTFIX 2026-05-29b — мобильная шапка / composer / iPhone anti-jump
+   ======================================================================== */
+
+.chat-header-profile-btn {
+  min-width: 0;
+  flex: 1;
+}
+.chat-header-profile-btn > div:last-child {
+  min-width: 0;
+}
+.chat-header-avatar {
+  flex: 0 0 46px;
+  min-width: 46px;
+  width: 46px;
+  height: 46px;
+}
+
+@media (max-width: 920px) {
+  body.mobile-mode,
+  body.mobile-mode #appScreen,
+  body.mobile-mode .chat-panel,
+  body.mobile-mode .sidebar {
+    overflow: hidden;
+  }
+
+  body.mobile-mode .chat-header {
+    gap: 10px;
+    align-items: flex-start;
+  }
+  body.mobile-mode .chat-header-main {
+    flex: 1;
+    min-width: 0;
+    gap: 10px;
+    align-items: center;
+  }
+  body.mobile-mode .chat-header-actions {
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  body.mobile-mode .chat-header-actions .icon-btn,
+  body.mobile-mode .chat-header-main > .icon-btn,
+  body.mobile-mode .mobile-tools-btn,
+  body.mobile-mode #attachBtnMobile {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    border-radius: 14px;
+  }
+  body.mobile-mode .chat-header-profile-btn {
+    gap: 10px;
+    min-width: 0;
+  }
+  body.mobile-mode .chat-header-avatar {
+    flex: 0 0 48px !important;
+    min-width: 48px !important;
+    width: 48px !important;
+    height: 48px !important;
+  }
+  body.mobile-mode .chat-title {
+    font-size: 18px;
+    line-height: 1.15;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  body.mobile-mode #chatMeta {
+    line-height: 1.2;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+  }
+
+  body.mobile-mode .message-list {
+    padding-top: 12px;
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body.mobile-mode #attachBtn {
+    display: none !important;
+  }
+  body.mobile-mode .composer {
+    position: sticky;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    display: grid;
+    grid-template-columns: 44px 44px minmax(0, 1fr) 68px;
+    grid-template-areas: 'attach more input send';
+    gap: 8px;
+    align-items: center;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    border-top-left-radius: 18px;
+    border-top-right-radius: 18px;
+    box-shadow: 0 -10px 24px rgba(0,0,0,0.14);
+    backdrop-filter: blur(8px);
+  }
+  body.mobile-mode #attachBtnMobile { grid-area: attach; display: inline-grid !important; }
+  body.mobile-mode #mobileToolsBtn { grid-area: more; }
+  body.mobile-mode #messageInput {
+    grid-area: input;
+    min-width: 0;
+    width: 100%;
+    min-height: 48px;
+    height: 48px;
+    max-height: 120px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    overflow-y: auto;
+  }
+  body.mobile-mode #sendBtn {
+    grid-area: send;
+    width: 68px;
+    min-width: 68px;
+    min-height: 48px;
+    border-radius: 16px;
+    padding: 0;
+  }
+  body.mobile-mode .composer-side-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  body.mobile-mode .composer {
+    grid-template-columns: 40px 40px minmax(0, 1fr) 62px;
+    gap: 6px;
+  }
+  body.mobile-mode .chat-header-actions .icon-btn,
+  body.mobile-mode .chat-header-main > .icon-btn,
+  body.mobile-mode .mobile-tools-btn,
+  body.mobile-mode #attachBtnMobile {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+  }
+  body.mobile-mode #sendBtn {
+    width: 62px;
+    min-width: 62px;
+  }
+  body.mobile-mode .chat-title {
+    font-size: 17px;
+  }
+}

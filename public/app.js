@@ -593,6 +593,11 @@ function getDraft(chatId) {
   return String(state.drafts[chatId] || '');
 }
 
+
+function normalizeChatMessages(messages = []) {
+  return Array.isArray(messages) ? messages.filter((message) => message && !message.deletedAt) : [];
+}
+
 function setDraft(chatId, value, sync = true) {
   if (!chatId) return;
   const text = String(value || '');
@@ -1843,7 +1848,7 @@ function renderMessages() {
   const shouldScroll = el.messageList.scrollTop >= el.messageList.scrollHeight - el.messageList.clientHeight - 100;
 
   el.messageList.className = 'message-list';
-  const messages = state.messagesByChat[state.currentChat.id] || [];
+  const messages = normalizeChatMessages(state.messagesByChat[state.currentChat.id] || []);
   const visibleMessages = state.currentChat.type === 'channel' ? messages.filter((message) => !message.replyToMessageId) : messages;
   const groups = buildMessageGroups(visibleMessages);
   
@@ -2190,7 +2195,7 @@ async function openChat(chatId) {
   state.socket?.emit('chat:join', { chatId });
   showSkeleton(el.messageList, 'messages');
   const { messages } = await api(`/api/chats/${chatId}/messages`);
-  state.messagesByChat[chatId] = messages;
+  state.messagesByChat[chatId] = normalizeChatMessages(messages);
   el.messageInput.value = getDraft(chatId);
   render();
   await api(`/api/chats/${chatId}/read`, { method: 'POST' }).catch(() => {});
@@ -3320,9 +3325,9 @@ function connectSocket() {
   });
 
   state.socket.on('message:new', (message) => {
-    const list = state.messagesByChat[message.chatId] || [];
-    if (!list.some((item) => item.id === message.id)) list.push(message);
-    state.messagesByChat[message.chatId] = list;
+    const list = normalizeChatMessages(state.messagesByChat[message.chatId] || []);
+    if (!message.deletedAt && !list.some((item) => item.id === message.id)) list.push(message);
+    state.messagesByChat[message.chatId] = normalizeChatMessages(list);
     if (state.currentChat?.id === message.chatId) {
       requestRenderMessages();
       api(`/api/chats/${message.chatId}/read`, { method: 'POST' }).catch(() => {});
@@ -3331,11 +3336,13 @@ function connectSocket() {
   });
 
   state.socket.on('message:update', (message) => {
-    const list = state.messagesByChat[message.chatId] || [];
+    const list = normalizeChatMessages(state.messagesByChat[message.chatId] || []);
     const index = list.findIndex((item) => item.id === message.id);
-    if (index >= 0) list[index] = message;
+    if (message.deletedAt) {
+      if (index >= 0) list.splice(index, 1);
+    } else if (index >= 0) list[index] = message;
     else list.push(message);
-    state.messagesByChat[message.chatId] = list;
+    state.messagesByChat[message.chatId] = normalizeChatMessages(list);
     if (state.currentChat?.id === message.chatId) {
       if (state.currentChat.pinnedMessage?.id === message.id) {
         state.currentChat.pinnedMessage = {
@@ -3389,7 +3396,7 @@ function connectSocket() {
     if (state.currentChat?.id === chatId) {
       api(`/api/chats/${chatId}/messages?silent=1`, { method: 'GET' })
         .then((result) => {
-          state.messagesByChat[chatId] = result.messages;
+          state.messagesByChat[chatId] = normalizeChatMessages(result.messages);
           requestRenderMessages();
         })
         .catch(() => {});
@@ -3816,28 +3823,28 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight') shiftImageViewer(1);
 });
 
-// На мобиле resize срабатывает при появлении/скрытии адресной строки браузера.
-// Полный render() при каждом таком событии = мигание/дёргание DOM.
-// Поэтому:
-//   1) дебаунсим (раз в 200мс)
-//   2) если изменилась только высота (а ширина — нет), и только на <120px — игнорируем
-//      (это почти наверняка адресная строка, layout перестраивать не нужно)
-let __lastViewportWidth = window.innerWidth;
-let __lastViewportHeight = window.innerHeight;
+// На мобиле адресная строка браузера постоянно триггерит resize.
+// Полный render() на каждый такой resize = мигание/дёргание интерфейса.
+// Поэтому перерисовываем только когда реально меняется breakpoint или ориентация.
+let __lastMobileMode = isMobileViewport();
 let __resizeTimer = null;
 window.addEventListener('resize', () => {
   if (__resizeTimer) clearTimeout(__resizeTimer);
   __resizeTimer = setTimeout(() => {
-    const newW = window.innerWidth;
-    const newH = window.innerHeight;
-    const widthChanged = newW !== __lastViewportWidth;
-    const bigHeightChange = Math.abs(newH - __lastViewportHeight) > 120;
-    __lastViewportWidth = newW;
-    __lastViewportHeight = newH;
-    // Только высота изменилась немного → это адресная строка, ничего не делаем
-    if (!widthChanged && !bigHeightChange) return;
+    const nextMobileMode = isMobileViewport();
+    const crossedBreakpoint = nextMobileMode !== __lastMobileMode;
+    __lastMobileMode = nextMobileMode;
+    syncMobileLayout();
+    if (crossedBreakpoint || !nextMobileMode) {
+      render();
+    }
+  }, 140);
+});
+window.addEventListener('orientationchange', () => {
+  setTimeout(() => {
+    __lastMobileMode = isMobileViewport();
     syncMobileLayout();
     render();
-  }, 200);
+  }, 180);
 });
 bootstrap();

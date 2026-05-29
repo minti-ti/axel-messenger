@@ -265,7 +265,7 @@ function mapMessageRow(msg, reactionsMap) {
           messageId: msg.forwarded_from_message_id
         }
       : null,
-    content: msg.deleted_at ? 'Сообщение удалено' : msg.content,
+    content: msg.content,
     albumId: msg.album_id,
     messageType: msg.message_type,
     attachmentUrl: msg.attachment_url,
@@ -341,7 +341,7 @@ function messageSelect() {
 }
 
 async function formatMessage(messageId) {
-  const result = await query(`${messageSelect()} WHERE m.id = $1`, [messageId]);
+  const result = await query(`${messageSelect()} WHERE m.id = $1 AND m.deleted_at IS NULL`, [messageId]);
   const msg = result.rows[0];
   if (!msg) return null;
   const reactionsResult = await query('SELECT message_id, user_id, emoji, created_at FROM reactions WHERE message_id = $1 ORDER BY created_at ASC', [messageId]);
@@ -353,7 +353,7 @@ async function listMessages(chatId, userId, limit = 50) {
   await query('UPDATE chat_members SET last_read_at = NOW() WHERE chat_id = $1 AND user_id = $2', [chatId, userId]);
   const result = await query(
     `${messageSelect()}
-     WHERE m.chat_id = $1
+     WHERE m.chat_id = $1 AND m.deleted_at IS NULL
      ORDER BY m.created_at DESC
      LIMIT $2`,
     [chatId, limit]
