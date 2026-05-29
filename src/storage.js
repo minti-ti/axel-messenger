@@ -4,6 +4,7 @@ const { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand } = requ
 const config = require('./config');
 
 const isS3 = config.storage.mode === 's3';
+const isBackblazeB2 = /backblazeb2\.com/i.test(String(config.storage.endpoint || ''));
 
 let s3 = null;
 if (isS3) {
@@ -11,6 +12,10 @@ if (isS3) {
     region: config.storage.region,
     endpoint: config.storage.endpoint || undefined,
     forcePathStyle: true,
+    // Backblaze B2 не поддерживает новые checksum-by-default фичи AWS SDK v3.
+    // Без этого PutObject может падать с IncompleteBody / unsupported checksum headers.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: {
       accessKeyId: config.storage.accessKeyId,
       secretAccessKey: config.storage.secretAccessKey
@@ -150,18 +155,23 @@ let bucketChecked = false;
 async function ensureS3Bucket() {
   if (!isS3 || !config.storage.bucket) return;
   if (bucketChecked) return;
+
+  // Для Backblaze B2 не делаем предварительный HeadBucket: у B2 S3-совместимость
+  // с AWS SDK периодически даёт ложные ошибки на preflight-проверках.
+  // Реальную доступность всё равно покажет PutObject/GetObject ниже.
+  if (isBackblazeB2) {
+    bucketChecked = true;
+    return;
+  }
+
   try {
     await s3.send(new HeadBucketCommand({ Bucket: config.storage.bucket }));
     bucketChecked = true;
   } catch (error) {
-    // На Backblaze B2 (и многих других S3-совместимых сервисах) бакет нельзя
-    // создать через S3 API — нужно создать в веб-консоли. Просто предупреждаем.
     console.warn(
       `[storage] Bucket "${config.storage.bucket}" not accessible (${error.name || 'error'}). ` +
       `Create it in your storage provider console. Endpoint: ${config.storage.endpoint || 'default AWS'}`
     );
-    // Не выставляем bucketChecked=true, чтобы при следующей попытке снова попробовать
-    // (бакет может появиться после рестарта без редеплоя).
   }
 }
 
@@ -173,6 +183,7 @@ async function saveUpload(file, { folder = 'misc' } = {}) {
       Bucket: config.storage.bucket,
       Key: key,
       Body: file.buffer,
+      ContentLength: file.buffer.length,
       ContentType: file.mimetype || 'application/octet-stream'
     }));
     return {
