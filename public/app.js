@@ -125,6 +125,7 @@ const el = {
   mobileToolsOverlay: document.getElementById('mobileToolsOverlay'),
   fileInput: document.getElementById('fileInput'),
   attachBtn: document.getElementById('attachBtn'),
+  attachBtnMobile: document.getElementById('attachBtnMobile'),
   emojiBtn: document.getElementById('emojiBtn'),
   stickerBtn: document.getElementById('stickerBtn'),
   messageInput: document.getElementById('messageInput'),
@@ -190,7 +191,12 @@ async function api(path, options = {}) {
     body: isForm ? options.body : options.body ? JSON.stringify(options.body) : undefined
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Ошибка запроса');
+  if (!response.ok) {
+    const err = new Error(data.error || 'Ошибка запроса');
+    err.data = data;
+    err.status = response.status;
+    throw err;
+  }
   return data;
 }
 
@@ -211,6 +217,225 @@ function escapeValue(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+
+const AUTH_MEDIA_MAX_CACHE_ITEMS = 80;
+const authMediaCache = new Map();
+const authMediaPending = new Map();
+
+function isPublicAvatarStoragePath(value = '') {
+  return /(^|\/)(avatars?|chat-avatars?)(\/|-)/i.test(String(value || ''));
+}
+
+function isProtectedMediaUrl(url = '') {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    const pathname = decodeURIComponent(parsed.pathname || '');
+    if (pathname.startsWith('/files/')) {
+      return !isPublicAvatarStoragePath(pathname.slice('/files/'.length));
+    }
+    if (pathname.startsWith('/uploads/')) {
+      return !isPublicAvatarStoragePath(pathname.slice('/uploads/'.length));
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+function rememberAuthMediaEntry(sourceUrl, entry) {
+  const existing = authMediaCache.get(sourceUrl);
+  if (existing?.objectUrl && existing.objectUrl !== entry.objectUrl && String(existing.objectUrl).startsWith('blob:')) {
+    try { URL.revokeObjectURL(existing.objectUrl); } catch {}
+  }
+  authMediaCache.delete(sourceUrl);
+  authMediaCache.set(sourceUrl, entry);
+  while (authMediaCache.size > AUTH_MEDIA_MAX_CACHE_ITEMS) {
+    const oldest = authMediaCache.entries().next().value;
+    if (!oldest) break;
+    const [oldUrl, oldEntry] = oldest;
+    authMediaCache.delete(oldUrl);
+    if (oldEntry?.objectUrl && String(oldEntry.objectUrl).startsWith('blob:')) {
+      try { URL.revokeObjectURL(oldEntry.objectUrl); } catch {}
+    }
+  }
+  return entry;
+}
+
+function clearAuthMediaCache() {
+  for (const entry of authMediaCache.values()) {
+    if (entry?.objectUrl && String(entry.objectUrl).startsWith('blob:')) {
+      try { URL.revokeObjectURL(entry.objectUrl); } catch {}
+    }
+  }
+  authMediaCache.clear();
+  authMediaPending.clear();
+}
+window.addEventListener('beforeunload', clearAuthMediaCache);
+
+async function fetchMediaResponse(sourceUrl) {
+  const headers = {};
+  if (isProtectedMediaUrl(sourceUrl)) {
+    if (!state.token) {
+      const error = new Error('Требуется авторизация для загрузки вложения');
+      error.status = 401;
+      throw error;
+    }
+    headers.Authorization = `Bearer ${state.token}`;
+  }
+  const response = await fetch(sourceUrl, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const err = new Error(data.error || 'Не удалось загрузить вложение');
+    err.data = data;
+    err.status = response.status;
+    throw err;
+  }
+  return response;
+}
+
+async function getAuthorizedMediaEntry(sourceUrl) {
+  if (!isProtectedMediaUrl(sourceUrl)) return { objectUrl: sourceUrl, direct: true };
+  if (authMediaCache.has(sourceUrl)) {
+    const cached = authMediaCache.get(sourceUrl);
+    authMediaCache.delete(sourceUrl);
+    authMediaCache.set(sourceUrl, cached);
+    return cached;
+  }
+  if (authMediaPending.has(sourceUrl)) return authMediaPending.get(sourceUrl);
+  const pending = (async () => {
+    const response = await fetchMediaResponse(sourceUrl);
+    const blob = await response.blob();
+    return rememberAuthMediaEntry(sourceUrl, {
+      objectUrl: URL.createObjectURL(blob),
+      blob,
+      contentType: blob.type || response.headers.get('content-type') || '',
+      fetchedAt: Date.now()
+    });
+  })().finally(() => authMediaPending.delete(sourceUrl));
+  authMediaPending.set(sourceUrl, pending);
+  return pending;
+}
+
+async function getMediaArrayBuffer(sourceUrl) {
+  if (isProtectedMediaUrl(sourceUrl)) {
+    const entry = await getAuthorizedMediaEntry(sourceUrl);
+    if (!entry.arrayBufferPromise) {
+      entry.arrayBufferPromise = entry.blob.arrayBuffer();
+    }
+    return entry.arrayBufferPromise;
+  }
+  const response = await fetchMediaResponse(sourceUrl);
+  return response.arrayBuffer();
+}
+
+function mediaSourceAttrs(url = '') {
+  if (!url) return '';
+  return isProtectedMediaUrl(url)
+    ? `data-protected-src="${escapeValue(url)}"`
+    : `src="${escapeValue(url)}"`;
+}
+
+function mediaLinkAttrs(url = '', filename = '') {
+  if (!url) return '';
+  const safeUrl = escapeValue(url);
+  const safeFilename = escapeValue(filename);
+  return isProtectedMediaUrl(url)
+    ? `href="${safeUrl}" data-protected-href="${safeUrl}" data-download-name="${safeFilename}" target="_blank" rel="noopener noreferrer"`
+    : `href="${safeUrl}" target="_blank" rel="noopener noreferrer"`;
+}
+
+async function applyResolvedMediaToElement(element, sourceUrl) {
+  if (!element || !sourceUrl) return;
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  element.dataset.mediaRequestId = requestId;
+  element.classList.add('media-loading');
+  element.classList.remove('media-failed');
+  try {
+    const entry = await getAuthorizedMediaEntry(sourceUrl);
+    if (element.dataset.mediaRequestId !== requestId) return;
+    const resolvedUrl = entry.objectUrl || sourceUrl;
+    if (element.tagName === 'VIDEO' || element.tagName === 'AUDIO') {
+      if (element.getAttribute('src') !== resolvedUrl) {
+        element.src = resolvedUrl;
+        element.load?.();
+      }
+    } else if (element.tagName === 'IMG') {
+      element.src = resolvedUrl;
+    } else {
+      element.setAttribute('src', resolvedUrl);
+    }
+    element.dataset.resolvedSrc = resolvedUrl;
+    element.classList.remove('media-loading');
+  } catch (error) {
+    if (element.dataset.mediaRequestId !== requestId) return;
+    element.classList.remove('media-loading');
+    element.classList.add('media-failed');
+    element.dataset.mediaError = error.message || 'Не удалось загрузить вложение';
+    throw error;
+  }
+}
+
+async function openProtectedMediaLink(link) {
+  const sourceUrl = link?.dataset?.protectedHref;
+  if (!sourceUrl) return;
+  if (link.dataset.loading === '1') return;
+  const originalText = link.dataset.originalText || link.textContent || 'Открыть';
+  link.dataset.originalText = originalText;
+  link.dataset.loading = '1';
+  link.textContent = '⏳ Загрузка...';
+  link.classList.add('is-loading');
+  try {
+    const entry = await getAuthorizedMediaEntry(sourceUrl);
+    const filename = link.dataset.downloadName || '';
+    const previewable = isImageAttachment(filename) || isVideoAttachment(filename) || isAudioAttachment(filename) || /\.pdf$/i.test(filename);
+    if (previewable) {
+      const popup = window.open(entry.objectUrl, '_blank', 'noopener');
+      if (!popup) {
+        const temp = document.createElement('a');
+        temp.href = entry.objectUrl;
+        temp.target = '_blank';
+        temp.rel = 'noopener noreferrer';
+        document.body.appendChild(temp);
+        temp.click();
+        temp.remove();
+      }
+    } else {
+      const temp = document.createElement('a');
+      temp.href = entry.objectUrl;
+      temp.download = filename || 'download';
+      document.body.appendChild(temp);
+      temp.click();
+      temp.remove();
+    }
+  } catch (error) {
+    showToast(error.message || 'Не удалось открыть вложение', true);
+  } finally {
+    link.dataset.loading = '0';
+    link.classList.remove('is-loading');
+    link.textContent = originalText;
+  }
+}
+
+function hydrateProtectedMedia(root = document) {
+  root.querySelectorAll('[data-protected-src]').forEach((node) => {
+    if (node.dataset.hydrated === '1') return;
+    node.dataset.hydrated = '1';
+    applyResolvedMediaToElement(node, node.dataset.protectedSrc).catch((error) => {
+      node.dataset.hydrated = '0';
+      console.warn('Protected media load failed:', error.message);
+    });
+  });
+  root.querySelectorAll('a[data-protected-href]').forEach((link) => {
+    if (link.dataset.bound === '1') return;
+    link.dataset.bound = '1';
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      openProtectedMediaLink(link);
+    });
+  });
 }
 
 function normalizeUsername(value) {
@@ -292,6 +517,7 @@ function resetAuthForm() {
 }
 
 function clearSession() {
+  clearAuthMediaCache();
   if (state.socket) {
     state.socket.disconnect();
     state.socket = null;
@@ -401,7 +627,7 @@ function isAudioAttachment(name = '') {
 }
 
 function isImageAttachment(name = '') {
-  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(String(name || ''));
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(name || ''));
 }
 
 function notificationAllowed() {
@@ -550,8 +776,7 @@ function drawWaveformOnCanvas(canvas, data) {
 
 async function ensureWaveform(src) {
   if (state.waveformCache[src]) return state.waveformCache[src];
-  const response = await fetch(src);
-  const buffer = await response.arrayBuffer();
+  const buffer = await getMediaArrayBuffer(src);
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
   const decoded = await audioContext.decodeAudioData(buffer.slice(0));
   const channel = decoded.getChannelData(0);
@@ -690,7 +915,9 @@ function collectViewerImages() {
 function updateImageViewer() {
   const item = state.viewerImages[state.viewerIndex];
   if (!item) return closeImageViewer();
-  el.imageViewerImg.src = item.src;
+  el.imageViewerImg.removeAttribute('src');
+  el.imageViewerImg.classList.remove('media-failed');
+  el.imageViewerImg.classList.add('media-loading');
   el.imageViewerImg.alt = item.alt || 'Изображение';
   el.imageViewerCaption.textContent = item.caption || '';
   const many = state.viewerImages.length > 1;
@@ -698,6 +925,15 @@ function updateImageViewer() {
   el.nextImageBtn.classList.toggle('hidden', !many);
   el.imageViewerCount.classList.toggle('hidden', !many);
   if (many) el.imageViewerCount.textContent = `${state.viewerIndex + 1} / ${state.viewerImages.length}`;
+  if (isProtectedMediaUrl(item.src)) {
+    applyResolvedMediaToElement(el.imageViewerImg, item.src).catch((error) => {
+      console.warn('Viewer image load failed:', error.message);
+      showToast('Не удалось загрузить изображение', true);
+    });
+  } else {
+    el.imageViewerImg.src = item.src;
+    el.imageViewerImg.classList.remove('media-loading');
+  }
 }
 
 function openImageViewerFromSrc(src) {
@@ -1554,16 +1790,17 @@ function openMessageContextMenu(message, x, y) {
 
 function attachmentMarkup(message) {
   if (!message.attachmentUrl) return '';
+  const linkAttrs = mediaLinkAttrs(message.attachmentUrl, message.attachmentName || '');
   if (isAudioAttachment(message.attachmentName)) {
-    return `<audio class="audio-player" controls src="${message.attachmentUrl}"></audio><canvas class="audio-waveform" width="220" height="42" data-waveform-src="${message.attachmentUrl}"></canvas><div style="margin-top:8px"><a class="file-link" href="${message.attachmentUrl}" target="_blank">🎤 ${escapeHtml(message.attachmentName || 'Голосовое сообщение')}</a></div>`;
+    return `<audio class="audio-player" controls ${mediaSourceAttrs(message.attachmentUrl)}></audio><canvas class="audio-waveform" width="220" height="42" data-waveform-src="${escapeValue(message.attachmentUrl)}"></canvas><div style="margin-top:8px"><a class="file-link" ${linkAttrs}>🎤 ${escapeHtml(message.attachmentName || 'Голосовое сообщение')}</a></div>`;
   }
   if (isImageAttachment(message.attachmentName)) {
-    return `<button type="button" class="image-preview-btn"><img class="chat-image-preview" data-viewer-src="${message.attachmentUrl}" data-viewer-caption="${escapeHtml(message.attachmentName || 'Изображение')}" src="${message.attachmentUrl}" alt="${escapeHtml(message.attachmentName || 'Изображение')}" /></button><div style="margin-top:8px"><a class="file-link" href="${message.attachmentUrl}" target="_blank">🖼 ${escapeHtml(message.attachmentName || 'Изображение')}</a></div>`;
+    return `<button type="button" class="image-preview-btn"><img class="chat-image-preview" data-viewer-src="${escapeValue(message.attachmentUrl)}" data-viewer-caption="${escapeValue(message.attachmentName || 'Изображение')}" ${mediaSourceAttrs(message.attachmentUrl)} alt="${escapeValue(message.attachmentName || 'Изображение')}" /></button><div style="margin-top:8px"><a class="file-link" ${linkAttrs}>🖼 ${escapeHtml(message.attachmentName || 'Изображение')}</a></div>`;
   }
   if (isVideoAttachment(message.attachmentName)) {
-    return `<video class="chat-video-preview" controls preload="metadata" src="${message.attachmentUrl}"></video><div style="margin-top:8px"><a class="file-link" href="${message.attachmentUrl}" target="_blank">🎬 ${escapeHtml(message.attachmentName || 'Видео')}</a></div>`;
+    return `<video class="chat-video-preview" controls preload="metadata" ${mediaSourceAttrs(message.attachmentUrl)}></video><div style="margin-top:8px"><a class="file-link" ${linkAttrs}>🎬 ${escapeHtml(message.attachmentName || 'Видео')}</a></div>`;
   }
-  return `<div style="margin-top:10px"><a class="file-link" href="${message.attachmentUrl}" target="_blank">📎 ${escapeHtml(message.attachmentName || 'Файл')}</a></div>`;
+  return `<div style="margin-top:10px"><a class="file-link" ${linkAttrs}>📎 ${escapeHtml(message.attachmentName || 'Файл')}</a></div>`;
 }
 
 function buildMessageGroups(messages) {
@@ -1628,7 +1865,7 @@ function renderMessages() {
     const albumGrid = albumMessages
       ? `<div class="album-grid">${albumMessages
           .map(
-            (item) => `<button type="button" class="image-preview-btn album-tile"><img class="chat-image-preview album-image" data-viewer-src="${item.attachmentUrl}" data-viewer-caption="${escapeHtml(item.attachmentName || 'Изображение')}" src="${item.attachmentUrl}" alt="${escapeHtml(item.attachmentName || 'Изображение')}" /></button>`
+            (item) => `<button type="button" class="image-preview-btn album-tile"><img class="chat-image-preview album-image" data-viewer-src="${escapeValue(item.attachmentUrl)}" data-viewer-caption="${escapeValue(item.attachmentName || 'Изображение')}" ${mediaSourceAttrs(item.attachmentUrl)} alt="${escapeValue(item.attachmentName || 'Изображение')}" /></button>`
           )
           .join('')}</div>`
       : '';
@@ -1713,7 +1950,7 @@ function renderMessages() {
             }
           });
           renderSelectionBar();
-          requestRequestRenderMessages();
+          requestRenderMessages();
         } else {
           toggleMessageSelection(message.id);
         }
@@ -1835,6 +2072,7 @@ function renderMessages() {
   el.messageList.appendChild(fragment);
 
   mountWaveforms(el.messageList);
+  hydrateProtectedMedia(el.messageList);
   
   if (shouldScroll) {
     el.messageList.scrollTop = el.messageList.scrollHeight;
@@ -2528,14 +2766,23 @@ async function renderMediaGallery(chatId, container) {
             <div><strong>${escapeHtml(item.attachmentName || item.url || 'Элемент')}</strong></div>
             <div class="muted">${escapeHtml(item.authorName || '')} · ${formatMessageTime(item.createdAt)}</div>
             ${item.content ? `<div class="muted">${escapeHtml(item.content)}</div>` : ''}
-            ${item.type === 'link' ? `<a class="file-link" href="${item.url}" target="_blank">Открыть ссылку</a>` : item.type === 'audio' ? `<audio class="audio-player" controls src="${item.attachmentUrl}"></audio><canvas class="audio-waveform" width="220" height="42" data-waveform-src="${item.attachmentUrl}"></canvas>` : item.type === 'photo' ? `<button type="button" class="image-preview-btn"><img class="gallery-image-preview" data-viewer-src="${item.attachmentUrl}" data-viewer-caption="${escapeHtml(item.attachmentName || 'Изображение')}" src="${item.attachmentUrl}" alt="${escapeHtml(item.attachmentName || 'Изображение')}" /></button>` : item.type === 'video' ? `<video class="chat-video-preview" controls preload="metadata" src="${item.attachmentUrl}"></video>` : ''}
-            ${item.attachmentUrl ? `<a class="file-link" href="${item.attachmentUrl}" target="_blank">Открыть</a>` : ''}
+            ${item.type === 'link'
+              ? `<a class="file-link" href="${escapeValue(item.url)}" target="_blank" rel="noopener noreferrer">Открыть ссылку</a>`
+              : item.type === 'audio'
+                ? `<audio class="audio-player" controls ${mediaSourceAttrs(item.attachmentUrl)}></audio><canvas class="audio-waveform" width="220" height="42" data-waveform-src="${escapeValue(item.attachmentUrl)}"></canvas>`
+                : item.type === 'photo'
+                  ? `<button type="button" class="image-preview-btn"><img class="gallery-image-preview" data-viewer-src="${escapeValue(item.attachmentUrl)}" data-viewer-caption="${escapeValue(item.attachmentName || 'Изображение')}" ${mediaSourceAttrs(item.attachmentUrl)} alt="${escapeValue(item.attachmentName || 'Изображение')}" /></button>`
+                  : item.type === 'video'
+                    ? `<video class="chat-video-preview" controls preload="metadata" ${mediaSourceAttrs(item.attachmentUrl)}></video>`
+                    : ''}
+            ${item.attachmentUrl ? `<a class="file-link" ${mediaLinkAttrs(item.attachmentUrl, item.attachmentName || '')}>Открыть</a>` : ''}
           </div>
         `).join('')}
       </div>
     `;
   }).join('');
   mountWaveforms(container);
+  hydrateProtectedMedia(container);
 }
 
 async function renderInvites(chatId, container) {
@@ -3103,6 +3350,35 @@ function connectSocket() {
     }
   });
 
+  // Бэкенд делает hard-delete и эмитит message:deleted. Убираем сообщение из локального стейта,
+  // снимаем pin/выделение и перерисовываем.
+  state.socket.on('message:deleted', ({ messageId, chatId } = {}) => {
+    if (!messageId) return;
+    // chatId может не прийти — найдём чат по сообщению
+    let targetChatId = chatId;
+    if (!targetChatId) {
+      for (const [cid, list] of Object.entries(state.messagesByChat)) {
+        if (list.some((m) => m.id === messageId)) { targetChatId = cid; break; }
+      }
+    }
+    if (targetChatId && state.messagesByChat[targetChatId]) {
+      state.messagesByChat[targetChatId] = state.messagesByChat[targetChatId].filter((m) => m.id !== messageId);
+    }
+    // Снимаем pin, если это закреплённое
+    if (state.currentChat?.pinnedMessage?.id === messageId) {
+      state.currentChat.pinnedMessage = null;
+      renderPinnedBar();
+    }
+    // Убираем из выделения, если было выбрано
+    if (state.selectedMessageIds.includes(messageId)) {
+      state.selectedMessageIds = state.selectedMessageIds.filter((id) => id !== messageId);
+      renderSelectionBar();
+    }
+    if (state.currentChat?.id === targetChatId) {
+      requestRenderMessages();
+    }
+  });
+
   state.socket.on('chat:pinned', (pinnedMessage) => {
     if (!state.currentChat) return;
     state.currentChat.pinnedMessage = pinnedMessage;
@@ -3160,8 +3436,37 @@ el.requestCodeBtn.onclick = async () => {
     el.displayNameStep.classList.toggle('hidden', result.userExists);
     el.authModeHint.textContent = result.userExists ? 'Номер уже зарегистрирован — просто введите код.' : 'Новый номер: укажите имя только для первой регистрации.';
     el.devCodeHint.textContent = result.devCode ? `Тестовый код: ${result.devCode}` : 'Код отправлен.';
+    // Снимаем подсветку с кнопки бота — она здесь не нужна
+    document.getElementById('botLinkBtn')?.classList.remove('needs-binding');
     showToast('Код отправлен');
   } catch (error) {
+    // Особый случай: нужно сначала привязать номер в Telegram-боте
+    if (error.data?.code === 'NEEDS_BINDING') {
+      const botLink = document.getElementById('botLinkBtn');
+      if (botLink) {
+        // Если сервер прислал актуальный username бота — обновим ссылку
+        if (error.data.botUsername) {
+          botLink.href = `https://t.me/${error.data.botUsername}`;
+        }
+        botLink.classList.add('needs-binding');
+        botLink.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      el.codeStep.classList.add('hidden');
+      el.authModeHint.innerHTML = '⚠️ Сначала откройте Telegram-бота и нажмите <b>«📱 Отправить номер»</b>, а затем вернитесь сюда и снова нажмите «Получить код».';
+      el.devCodeHint.textContent = '';
+      showToast(error.message, true);
+      return;
+    }
+    if (error.data?.code === 'NO_DELIVERY') {
+      el.authModeHint.textContent = '⚠️ Сервис отправки кодов сейчас недоступен. Попробуйте позже или свяжитесь с поддержкой.';
+      showToast(error.message, true);
+      return;
+    }
+    if (error.data?.code === 'TELEGRAM_FAIL') {
+      el.authModeHint.textContent = '⚠️ Не удалось отправить код через Telegram. Попробуйте ещё раз через минуту.';
+      showToast(error.message, true);
+      return;
+    }
     showToast(error.message, true);
   }
 };
@@ -3389,7 +3694,9 @@ el.attachBtn.onclick = () => {
     el.fileInput.click();
   }
 };
-[el.attachBtn, el.emojiBtn, el.stickerBtn, el.recordVoiceBtn, el.sendBtn, el.mobileToolsBtn].filter(Boolean).forEach((button) => {
+// Мобильная attach-кнопка ведёт себя так же, как основная
+if (el.attachBtnMobile) el.attachBtnMobile.onclick = el.attachBtn.onclick;
+[el.attachBtn, el.attachBtnMobile, el.emojiBtn, el.stickerBtn, el.recordVoiceBtn, el.sendBtn, el.mobileToolsBtn].filter(Boolean).forEach((button) => {
   button.addEventListener('mouseenter', () => button.classList.add('button-preview-glow'));
   button.addEventListener('mouseleave', () => button.classList.remove('button-preview-glow'));
   button.addEventListener('focus', () => button.classList.add('button-preview-glow'));
@@ -3509,5 +3816,28 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight') shiftImageViewer(1);
 });
 
-window.addEventListener('resize', () => { syncMobileLayout(); render(); });
+// На мобиле resize срабатывает при появлении/скрытии адресной строки браузера.
+// Полный render() при каждом таком событии = мигание/дёргание DOM.
+// Поэтому:
+//   1) дебаунсим (раз в 200мс)
+//   2) если изменилась только высота (а ширина — нет), и только на <120px — игнорируем
+//      (это почти наверняка адресная строка, layout перестраивать не нужно)
+let __lastViewportWidth = window.innerWidth;
+let __lastViewportHeight = window.innerHeight;
+let __resizeTimer = null;
+window.addEventListener('resize', () => {
+  if (__resizeTimer) clearTimeout(__resizeTimer);
+  __resizeTimer = setTimeout(() => {
+    const newW = window.innerWidth;
+    const newH = window.innerHeight;
+    const widthChanged = newW !== __lastViewportWidth;
+    const bigHeightChange = Math.abs(newH - __lastViewportHeight) > 120;
+    __lastViewportWidth = newW;
+    __lastViewportHeight = newH;
+    // Только высота изменилась немного → это адресная строка, ничего не делаем
+    if (!widthChanged && !bigHeightChange) return;
+    syncMobileLayout();
+    render();
+  }, 200);
+});
 bootstrap();

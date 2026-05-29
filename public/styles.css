@@ -98,6 +98,16 @@ button:active { transform: translateY(0); }
   padding: 12px 16px;
   font-weight: 700;
   text-decoration: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.bot-link-btn.needs-binding {
+  animation: bot-link-pulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7);
+}
+@keyframes bot-link-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0.7); transform: scale(1); }
+  50%  { box-shadow: 0 0 0 12px rgba(255, 193, 7, 0); transform: scale(1.03); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 193, 7, 0); transform: scale(1); }
 }
 .secondary-btn {
   background: var(--panel-3);
@@ -607,6 +617,23 @@ body.compact-chats .chat-preview { -webkit-line-clamp: 1; }
   max-height: 170px;
 }
 .file-link { color: var(--primary); }
+.file-link.is-loading { opacity: 0.7; pointer-events: none; }
+.chat-image-preview.media-loading,
+.gallery-image-preview.media-loading,
+.chat-video-preview.media-loading,
+.audio-player.media-loading,
+#imageViewerImg.media-loading {
+  opacity: 0.62;
+  filter: saturate(0.7);
+}
+.chat-image-preview.media-failed,
+.gallery-image-preview.media-failed,
+.chat-video-preview.media-failed,
+.audio-player.media-failed,
+#imageViewerImg.media-failed {
+  opacity: 0.38;
+  filter: grayscale(0.25);
+}
 
 .modal {
   position: fixed;
@@ -916,17 +943,17 @@ body.compact-chats .chat-preview { -webkit-line-clamp: 1; }
   box-shadow: 0 0 0 2px var(--selection-accent, var(--primary-soft)), 0 12px 32px rgba(0,0,0,0.12);
 }
 body {
-  scroll-behavior: smooth;
+  /* scroll-behavior: smooth убран — он ломает инерционный скролл на мобиле */
 }
 .auth-card,
 .modal-card,
-.chat-card,
-.message-row,
 .archive-entry,
 .pinned-bar,
 .selection-bar {
   animation: fade-slide-up 0.22s ease;
 }
+/* .chat-card и .message-row БЕЗ анимации — они часто перерисовываются,
+   иначе при каждом render() сообщения мигают / прыгают на мобиле */
 @keyframes fade-slide-up {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -934,13 +961,14 @@ body {
 .filter-chip,
 .chat-menu-btn,
 .message-bubble,
-.sidebar,
-.chat-panel,
 .drawer-item,
 .pinned-bar,
 .selection-bar {
-  transition: all 0.2s ease;
+  /* Анимируем ТОЛЬКО конкретные свойства, чтобы не было миганий при resize/scroll */
+  transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
 }
+/* .sidebar и .chat-panel специально без transition — они держат layout,
+   transition: all на них = миг при скролле адресной строки */
 
 .modal-card::-webkit-scrollbar, .drawer-menu::-webkit-scrollbar { width: 8px; }
 .modal-card::-webkit-scrollbar-thumb, .drawer-menu::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--primary) 42%, transparent); border-radius: 999px; }
@@ -1268,3 +1296,136 @@ body.viewer-open { overflow: hidden; }
 .image-viewer-caption { padding: 10px 18px; border-radius: 16px; background: rgba(0,0,0,0.24); backdrop-filter: blur(6px); }
 
 @media (max-width: 920px) { body.mobile-mode .composer { gap: 10px; padding: 12px 12px calc(12px + env(safe-area-inset-bottom,0px)); border-top-left-radius: 22px; border-top-right-radius: 22px; } body.mobile-mode .composer textarea { border-radius: 18px; } body.mobile-mode .composer-side-actions { bottom: 86px; border-radius: 26px 26px 18px 18px; } }
+
+/* ========================================================================
+   Мобильные фиксы (avatar squish, attach button visibility)
+   ======================================================================== */
+
+@media (max-width: 920px) {
+  /* 1) Аватарки больше не сжимаются ни при каком layout.
+        Доп. min-width гарантирует, что grid/flex родители уважают ширину. */
+  body.mobile-mode .avatar {
+    min-width: 56px !important;
+    width: 56px !important;
+    height: 56px !important;
+    flex: 0 0 56px !important;
+  }
+  body.mobile-mode .avatar.small {
+    min-width: 42px !important;
+    width: 42px !important;
+    height: 42px !important;
+    flex: 0 0 42px !important;
+  }
+  body.mobile-mode .avatar.large {
+    min-width: 84px !important;
+    width: 84px !important;
+    height: 84px !important;
+    flex: 0 0 84px !important;
+  }
+  body.mobile-mode.compact-chats .avatar {
+    min-width: 48px !important;
+    width: 48px !important;
+    height: 48px !important;
+    flex: 0 0 48px !important;
+  }
+
+  /* 2) На мобиле — отдельная attachBtn (#attachBtnMobile) слева, всегда видна.
+        Оригинальный #attachBtn остаётся внутри шторки только для десктопа. */
+  body.mobile-mode .composer {
+    grid-template-columns: 48px 1fr 48px 96px;
+    gap: 8px;
+    align-items: end;
+  }
+  body.mobile-mode #attachBtnMobile {
+    display: inline-grid !important;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    min-width: 48px;
+    padding: 0;
+    border-radius: 14px;
+    background: var(--panel-3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-size: 22px;
+    line-height: 1;
+  }
+  body.mobile-mode #attachBtnMobile:hover,
+  body.mobile-mode #attachBtnMobile:focus {
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  /* "+" кнопка делается ярче и заметнее (раньше была серой/прозрачной) */
+  body.mobile-mode .mobile-tools-btn {
+    background: var(--panel-3);
+    color: var(--text);
+    border: 1px solid var(--border);
+    font-size: 24px;
+    font-weight: 600;
+  }
+  body.mobile-mode .mobile-tools-btn:hover,
+  body.mobile-mode .mobile-tools-btn:focus {
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  /* Шторка "+" теперь содержит только emoji/стикеры/голосовое (3 кнопки),
+     а не 4 как раньше. На малых экранах делаем 1 колонку. */
+  body.mobile-mode .composer-side-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Очень узкие экраны (старые телефоны) — composer ещё компактнее */
+@media (max-width: 380px) {
+  body.mobile-mode .composer {
+    grid-template-columns: 42px 1fr 42px 78px;
+    gap: 6px;
+  }
+  body.mobile-mode #attachBtn {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+  }
+  body.mobile-mode .mobile-tools-btn {
+    width: 42px;
+    height: 42px;
+  }
+}
+
+/* Кнопка #attachBtnMobile — видна только на мобиле */
+.attach-btn-mobile { display: none; }
+
+
+/* ========================================================================
+   Мобильный viewport (исправление «прыжков» при появлении/скрытии
+   адресной строки браузера на мобиле)
+   ======================================================================== */
+@supports (height: 100dvh) {
+  .screen { min-height: 100dvh; }
+  body.mobile-mode #appScreen,
+  body.mobile-mode .chat-panel,
+  body.mobile-mode .sidebar {
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+  }
+}
+
+/* Отключаем overscroll-bounce на iOS, чтобы список чатов и сообщения
+   не «уезжали» вместе с body, когда юзер пытается скроллить за границу. */
+body { overscroll-behavior: contain; }
+.message-list,
+.chat-list { overscroll-behavior: contain; }
+
+/* На мобиле — отключаем pull-to-refresh браузера (он мешает листать вверх в чате) */
+@media (max-width: 920px) {
+  html, body { overscroll-behavior-y: contain; }
+  /* Аппаратное ускорение для контейнеров — гасит мерцание при скролле */
+  body.mobile-mode .message-list,
+  body.mobile-mode .chat-list {
+    transform: translateZ(0);
+    -webkit-overflow-scrolling: touch;
+  }
+}

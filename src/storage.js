@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand, CreateBucketCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand } = require('@aws-sdk/client-s3');
 const config = require('./config');
 
 const isS3 = config.storage.mode === 's3';
@@ -64,6 +64,50 @@ const SAFE_EXT_FALLBACK = new Set([
   '.pdf','.txt','.zip','.doc','.docx','.xls','.xlsx','.json'
 ]);
 
+
+const CONTENT_TYPE_BY_EXT = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.webm': 'video/webm',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.avi': 'video/x-msvideo',
+  '.mkv': 'video/x-matroska',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.json': 'application/json; charset=utf-8'
+};
+
+function detectContentType(filename = '') {
+  const ext = path.extname(String(filename || '')).toLowerCase();
+  if (ext === '.svg') return 'application/octet-stream';
+  return CONTENT_TYPE_BY_EXT[ext] || 'application/octet-stream';
+}
+
+function contentDispositionHeader(filename = '', inline = true) {
+  const safeName = encodeURIComponent(path.basename(String(filename || 'file')));
+  return `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${safeName}`;
+}
+
+function isDangerousInlineType(filename = '', contentType = '') {
+  const ext = path.extname(String(filename || '')).toLowerCase();
+  return ext === '.svg' || /svg|html|xml/i.test(String(contentType || ''));
+}
+
 function safeExtension(originalname, mimetype) {
   // 1. Доверяем mimetype в первую очередь (он провалидирован выше — в multer fileFilter)
   const byMime = SAFE_EXT_BY_MIME[String(mimetype || '').toLowerCase()];
@@ -83,12 +127,36 @@ function makeKey(folder, originalname = '', mimetype = '') {
   return `${safeFolder}/${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
 }
 
+// Для локального хранилища имя файла должно сохранять информацию о папке,
+// потому что мы складываем всё в один uploads/ без поддиректорий.
+// Это нужно для:
+//   - распознавания "это аватарка" в маршруте /uploads/ (без авторизации)
+//   - сохранения исторической схемы avatar-XXX.jpg
+function makeLocalFilename(folder, originalname = '', mimetype = '') {
+  const ext = safeExtension(originalname, mimetype);
+  const safeFolder = String(folder || 'misc').replace(/[^a-z0-9_-]/gi, '_');
+  return `${safeFolder}-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+}
+
+// Кэш проверки бакета — делаем один раз за процесс, чтобы не дёргать HeadBucket
+// на каждую загрузку. Если когда-то отвалится — увидим в логах saveUpload.
+let bucketChecked = false;
+
 async function ensureS3Bucket() {
   if (!isS3 || !config.storage.bucket) return;
+  if (bucketChecked) return;
   try {
     await s3.send(new HeadBucketCommand({ Bucket: config.storage.bucket }));
+    bucketChecked = true;
   } catch (error) {
-    await s3.send(new CreateBucketCommand({ Bucket: config.storage.bucket }));
+    // На Backblaze B2 (и многих других S3-совместимых сервисах) бакет нельзя
+    // создать через S3 API — нужно создать в веб-консоли. Просто предупреждаем.
+    console.warn(
+      `[storage] Bucket "${config.storage.bucket}" not accessible (${error.name || 'error'}). ` +
+      `Create it in your storage provider console. Endpoint: ${config.storage.endpoint || 'default AWS'}`
+    );
+    // Не выставляем bucketChecked=true, чтобы при следующей попытке снова попробовать
+    // (бакет может появиться после рестарта без редеплоя).
   }
 }
 
@@ -109,7 +177,7 @@ async function saveUpload(file, { folder = 'misc' } = {}) {
   }
 
   ensureLocalDir();
-  const filename = key.split('/').pop();
+  const filename = makeLocalFilename(folder, file.originalname, file.mimetype);
   fs.writeFileSync(path.join(config.uploadsDir, filename), file.buffer);
   return {
     key: filename,
@@ -134,14 +202,27 @@ function sanitizeStorageKey(rawKey) {
 
 async function streamStoredFile(key, res) {
   if (isS3) {
-    const object = await s3.send(new GetObjectCommand({
-      Bucket: config.storage.bucket,
-      Key: key
-    }));
-    if (object.ContentType) res.setHeader('Content-Type', object.ContentType);
+    let object;
+    try {
+      object = await s3.send(new GetObjectCommand({
+        Bucket: config.storage.bucket,
+        Key: key
+      }));
+    } catch (error) {
+      if (error?.name === 'NoSuchKey' || error?.$metadata?.httpStatusCode === 404) {
+        res.status(404).json({ error: 'Файл не найден' });
+        return;
+      }
+      throw error;
+    }
+    const filename = path.basename(String(key || 'file'));
+    const dangerousInline = isDangerousInlineType(filename, object.ContentType);
+    const fallbackType = detectContentType(filename);
+    const contentType = dangerousInline ? 'application/octet-stream' : (object.ContentType || fallbackType);
+    res.setHeader('Content-Type', contentType);
     // Жёстко защищаемся от inline-рендеринга HTML/SVG как XSS.
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Content-Disposition', contentDispositionHeader(filename, !dangerousInline));
     if (object.Body?.pipe) {
       object.Body.pipe(res);
       return;
@@ -167,8 +248,11 @@ async function streamStoredFile(key, res) {
     res.status(404).json({ error: 'Файл не найден' });
     return;
   }
+  const dangerousInline = isDangerousInlineType(filename, detectContentType(filename));
+  const contentType = dangerousInline ? 'application/octet-stream' : detectContentType(filename);
+  res.setHeader('Content-Type', contentType);
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Content-Disposition', contentDispositionHeader(filename, !dangerousInline));
   fs.createReadStream(resolved).pipe(res);
 }
 
@@ -176,5 +260,6 @@ module.exports = {
   saveUpload,
   streamStoredFile,
   sanitizeStorageKey,
-  isS3
+  isS3,
+  detectContentType
 };

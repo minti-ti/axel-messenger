@@ -2,9 +2,9 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Arena Messenger</title>
-    <link rel="stylesheet" href="/styles.css?v=20260527c" />
+    <link rel="stylesheet" href="/styles.css?v=20260529d" />
   </head>
   <body data-theme="dark">
     <script src="/encryption-client.js"></script>
@@ -138,7 +138,9 @@
             <button id="stickerBtn" type="button" class="secondary-btn">🧩 Стикеры</button>
             <button id="recordVoiceBtn" type="button" class="secondary-btn voice-btn">🎤 Голосовое</button>
           </div>
-          <button id="mobileToolsBtn" type="button" class="icon-btn mobile-tools-btn">＋</button>
+          <!-- Отдельная attach-кнопка, видна только на мобиле, всегда доступна без открытия шторки -->
+          <button id="attachBtnMobile" type="button" class="icon-btn attach-btn-mobile" title="Прикрепить файл" aria-label="Прикрепить файл">📎</button>
+          <button id="mobileToolsBtn" type="button" class="icon-btn mobile-tools-btn" title="Ещё (emoji, стикеры, голос)" aria-label="Ещё">＋</button>
           <textarea id="messageInput" rows="1" placeholder="Введите сообщение..."></textarea>
           <button id="sendBtn" type="submit" class="primary-btn">Отправить</button>
         </form>
@@ -170,6 +172,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=20260527c"></script>
+    <script src="/app.js?v=20260529d"></script>
   </body>
 </html>
