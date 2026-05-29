@@ -1,6 +1,6 @@
 const path = require('path');
 const crypto = require('crypto');
-require('dotenv').config({ path: path.join(process.cwd(), '.env') });
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PRODUCTION = NODE_ENV === 'production';
@@ -20,6 +20,14 @@ const JWT_SECRET = requireInProduction(
   process.env.JWT_SECRET,
   { forbiddenDefault: 'change_me_super_secret' }
 ) || `dev-only-${crypto.randomBytes(24).toString('hex')}`;
+
+// В production требуем нормальной длины ключа
+if (IS_PRODUCTION && JWT_SECRET.length < 32) {
+  throw new Error(
+    '[config] JWT_SECRET is too short (got ' + JWT_SECRET.length + ' chars, need >=32). ' +
+    'Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+  );
+}
 
 function resolveDatabaseUrl() {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -43,7 +51,7 @@ module.exports = {
   jwtSecret: JWT_SECRET,
   allowDevCodeResponse: String(process.env.ALLOW_DEV_CODE_RESPONSE || 'false') === 'true',
   databaseUrl: resolveDatabaseUrl(),
-  uploadsDir: path.join(process.cwd(), 'uploads'),
+  uploadsDir: path.join(__dirname, '..', 'uploads'),
   supportPhone: process.env.SUPPORT_PHONE || '',
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',

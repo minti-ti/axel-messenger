@@ -5,8 +5,8 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { Server } = require('socket.io');
 const config = require('./config');
-const { initDb, query } = require('./db');
-const { authMiddleware } = require('./auth');
+const { initDb, query, dbPing } = require('./db');
+const { authMiddleware, fetchSession, fetchUserById } = require('./auth');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const chatRoutes = require('./routes/chats');
@@ -86,7 +86,7 @@ app.use((req, res, next) => {
 function sendPublicAsset(res, filename, type) {
   res.type(type);
   if (!config.isProduction) res.setHeader('Cache-Control', 'no-store');
-  return res.sendFile(path.join(process.cwd(), 'public', filename));
+  return res.sendFile(path.join(__dirname, '..', 'public', filename));
 }
 
 app.get('/styles.css', (_, res) => sendPublicAsset(res, 'styles.css', 'text/css'));
@@ -97,18 +97,18 @@ app.get('/public-chat.js', (_, res) => sendPublicAsset(res, 'public-chat.js', 'a
 // ---- Авторизованные раздачи файлов ----
 // Раньше /uploads/* и /files/* были полностью публичны, что позволяло
 // скачать любое вложение, зная имя файла. Теперь оба требуют:
-//   1) валидный JWT (authMiddleware)
-//   2) членство в чате, к которому привязано сообщение с этим вложением.
+//   1) для аватарок (avatars/, chat-avatars/) — без авторизации, т.к. <img src>
+//      не может слать Bearer-токен. Аватары и так публичный контент.
+//   2) для вложений в сообщениях — требуем JWT + членство в чате.
+
+function isPublicAvatarPath(p) {
+  // Аватар может лежать как "avatars/...", "chat-avatars/..." (в S3 ключе)
+  // или как "/uploads/avatar-XXX-YYY.jpg" / "/uploads/chat-avatar-..." (локально).
+  return /(^|\/)(avatars?|chat-avatars?)(\/|-)/i.test(p);
+}
 
 async function userCanAccessAttachment(userId, attachmentPath) {
   if (!userId || !attachmentPath) return false;
-
-  // Аватары пользователей и чатов считаем публичным контентом (они и так видны в UI без авторизации),
-  // но всё равно требуем валидную сессию через authMiddleware выше.
-  if (attachmentPath.includes('avatar') || attachmentPath.includes('chat-avatars')) {
-    return true;
-  }
-
   // Ищем хотя бы одно сообщение, чьё attachment_url содержит наш путь, в чате где юзер — участник.
   const result = await query(
     `SELECT 1
@@ -121,14 +121,42 @@ async function userCanAccessAttachment(userId, attachmentPath) {
   return Boolean(result.rows[0]);
 }
 
+// Опциональная авторизация: если есть Bearer-токен — валидируем его так же,
+// как в authMiddleware: подпись JWT + активная серверная сессия + существующий пользователь.
+// Если токена нет или он невалиден — просто идём дальше без req.user.
+async function optionalAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return next();
+
+  try {
+    const jwt = require('jsonwebtoken');
+    const payload = jwt.verify(token, config.jwtSecret);
+    const session = await fetchSession(payload.sessionId, payload.userId);
+    if (!session) return next();
+    const user = await fetchUserById(payload.userId);
+    if (!user) return next();
+    req.user = user;
+    req.userRaw = user;
+    req.sessionId = session.id;
+  } catch (_) {
+    // Токен невалидный/просроченный — ведём себя как «без авторизации».
+  }
+
+  next();
+}
+
 const uploadsRouter = express.Router();
-uploadsRouter.use(authMiddleware);
-uploadsRouter.get('/:filename', async (req, res) => {
+uploadsRouter.get('/:filename', optionalAuth, async (req, res) => {
   try {
     const filename = sanitizeStorageKey(req.params.filename);
     const fullPath = `/uploads/${filename}`;
-    const allowed = await userCanAccessAttachment(req.user.id, fullPath);
-    if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    if (!isPublicAvatarPath(filename)) {
+      // Не аватар — требуем авторизацию и членство в чате
+      if (!req.user) return res.status(401).json({ error: 'Требуется авторизация' });
+      const allowed = await userCanAccessAttachment(req.user.id, fullPath);
+      if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    }
     await streamStoredFile(filename, res);
   } catch (error) {
     if (error.message === 'Invalid key' || error.message === 'Empty key') {
@@ -141,13 +169,16 @@ uploadsRouter.get('/:filename', async (req, res) => {
 app.use('/uploads', uploadsRouter);
 
 const filesRouter = express.Router();
-filesRouter.use(authMiddleware);
-filesRouter.get('/*', async (req, res) => {
+filesRouter.get('/*', optionalAuth, async (req, res) => {
   try {
     const rawKey = decodeURIComponent(String(req.params[0] || ''));
     const fullPath = `/files/${rawKey}`;
-    const allowed = await userCanAccessAttachment(req.user.id, fullPath);
-    if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    if (!isPublicAvatarPath(rawKey)) {
+      // Не аватар — требуем авторизацию и членство в чате
+      if (!req.user) return res.status(401).json({ error: 'Требуется авторизация' });
+      const allowed = await userCanAccessAttachment(req.user.id, fullPath);
+      if (!allowed) return res.status(403).json({ error: 'Доступ запрещён' });
+    }
     await streamStoredFile(rawKey, res);
   } catch (error) {
     if (error.message === 'Invalid key' || error.message === 'Empty key') {
@@ -159,7 +190,7 @@ filesRouter.get('/*', async (req, res) => {
 });
 app.use('/files', filesRouter);
 
-app.use(express.static(path.join(process.cwd(), 'public'), {
+app.use(express.static(path.join(__dirname, '..', 'public'), {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
     if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
@@ -192,8 +223,28 @@ const apiLimiter = rateLimit({
   legacyHeaders: false
 });
 
-app.get('/api/health', (_, res) => {
-  res.json({ ok: true, env: config.nodeEnv, now: new Date().toISOString() });
+// Стартовое время процесса для uptime в health
+const SERVICE_STARTED_AT = Date.now();
+
+app.get('/api/health', async (_, res) => {
+  const db = await dbPing();
+  res.status(db.ok ? 200 : 503).json({
+    ok: db.ok,
+    env: config.nodeEnv,
+    now: new Date().toISOString(),
+    uptimeSec: Math.round((Date.now() - SERVICE_STARTED_AT) / 1000),
+    db
+  });
+});
+
+// Версия — удобно увидеть какой коммит развёрнут (Render выставляет RENDER_GIT_COMMIT)
+app.get('/api/version', (_, res) => {
+  res.json({
+    commit: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || 'unknown',
+    branch: process.env.RENDER_GIT_BRANCH || 'unknown',
+    nodeVersion: process.version,
+    startedAt: new Date(SERVICE_STARTED_AT).toISOString()
+  });
 });
 
 app.use('/api/public', publicRoutes);
@@ -210,14 +261,14 @@ app.use('/api/chats', chatRoutes);
 app.post('/telegram/webhook', handleTelegramWebhook);
 
 app.get('/profile/:username', (_, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'public-profile.html'));
+  res.sendFile(path.join(__dirname, '..', 'public', 'public-profile.html'));
 });
 app.get(['/c/:username', '/g/:username'], (_, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'public-chat.html'));
+  res.sendFile(path.join(__dirname, '..', 'public', 'public-chat.html'));
 });
 
 app.get('*', (_, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
 async function emitChatRefresh(chatId) {
@@ -254,7 +305,24 @@ async function processScheduledMessages() {
     setupWebhook();
     setInterval(() => { processScheduledMessages().catch((error) => console.error('Scheduled dispatch error', error)); }, 5000);
     server.listen(config.port, () => {
-      console.log(`Messenger started on http://localhost:${config.port}`);
+      // Стартовый лог: показывает что в каком режиме работает.
+      // Полезно сразу видеть в логах Render: storage режим, есть ли Telegram, какой APP_URL.
+      const dbHost = (() => {
+        try {
+          return new URL(config.databaseUrl).host;
+        } catch { return '(invalid)'; }
+      })();
+      console.log(JSON.stringify({
+        event: 'server:started',
+        port: config.port,
+        env: config.nodeEnv,
+        appUrl: config.appUrl,
+        storage: config.storage.mode,
+        s3Endpoint: config.storage.endpoint || null,
+        telegramBot: Boolean(config.telegram.botToken && config.telegram.botToken !== 'your_bot_token_here'),
+        dbHost,
+        nodeVersion: process.version
+      }));
     });
   } catch (error) {
     console.error('Failed to start application', error);

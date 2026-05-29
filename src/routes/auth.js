@@ -45,15 +45,44 @@ router.post('/request-code', async (req, res) => {
       [phone, code, expiresAt]
     );
 
-    const delivery = await sendLoginCode(phone, code);
+    let delivery;
+    try {
+      delivery = await sendLoginCode(phone, code);
+    } catch (error) {
+      // Обработка типизированных ошибок из sms.js
+      if (error.code === 'NEEDS_BINDING') {
+        return res.status(error.statusCode || 400).json({
+          error: error.message,
+          code: 'NEEDS_BINDING',
+          botUsername: config.telegram?.botUsername || null,
+          userExists
+        });
+      }
+      if (error.code === 'NO_DELIVERY') {
+        return res.status(error.statusCode || 503).json({
+          error: error.message,
+          code: 'NO_DELIVERY'
+        });
+      }
+      if (error.code === 'TELEGRAM_FAIL') {
+        return res.status(error.statusCode || 502).json({
+          error: error.message,
+          code: 'TELEGRAM_FAIL'
+        });
+      }
+      throw error;
+    }
+
     return res.json({
       ok: true,
       userExists,
       deliveryMode: delivery.mode,
-      ...(config.nodeEnv !== 'production' && config.allowDevCodeResponse ? { devCode: code } : {})
+      ...(delivery.mode === 'dev' && config.allowDevCodeResponse && !config.isProduction
+          ? { devCode: code }
+          : {})
     });
   } catch (error) {
-    console.error(error);
+    console.error('[auth] request-code error:', error.message);
     return res.status(500).json({ error: 'Не удалось отправить код' });
   }
 });

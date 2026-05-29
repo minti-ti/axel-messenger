@@ -21,9 +21,47 @@ const { saveUpload } = require('../storage');
 
 const router = express.Router();
 
+// In-memory счётчики rate-limit. Ограничены по размеру и времени, чтобы не утекали.
 const userMessageBuckets = new Map();
 const suspiciousActivityLog = new Map();
+const RATE_LIMIT_MAX_USERS = 5000;      // защита от утечки памяти
+const SUSPICIOUS_MAX_KEYS = 2000;
 const { encryptMessage, decryptMessage, generateEncryptionKey } = require('../encryption');
+
+// Периодически чистим старые записи (раз в 10 минут).
+// Не используем setInterval на require-этапе, чтобы не блокировать выход процесса в тестах.
+let cleanupTimer = null;
+function startCleanupTimer() {
+  if (cleanupTimer) return;
+  cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    // Чистим старше 1 минуты — лимит работает в окне 15 секунд
+    for (const [userId, timestamps] of userMessageBuckets) {
+      const fresh = timestamps.filter((ts) => now - ts < 60000);
+      if (!fresh.length) userMessageBuckets.delete(userId);
+      else userMessageBuckets.set(userId, fresh);
+    }
+    // Если карты слишком разрослись — удаляем самые старые
+    if (userMessageBuckets.size > RATE_LIMIT_MAX_USERS) {
+      const toDelete = userMessageBuckets.size - RATE_LIMIT_MAX_USERS;
+      const keys = Array.from(userMessageBuckets.keys()).slice(0, toDelete);
+      keys.forEach((k) => userMessageBuckets.delete(k));
+    }
+    // Подозрительные события старше 24 часов — выбрасываем
+    for (const [key, entry] of suspiciousActivityLog) {
+      if (now - (entry.lastSeen || 0) > 24 * 60 * 60 * 1000) {
+        suspiciousActivityLog.delete(key);
+      }
+    }
+    if (suspiciousActivityLog.size > SUSPICIOUS_MAX_KEYS) {
+      const toDelete = suspiciousActivityLog.size - SUSPICIOUS_MAX_KEYS;
+      const keys = Array.from(suspiciousActivityLog.keys()).slice(0, toDelete);
+      keys.forEach((k) => suspiciousActivityLog.delete(k));
+    }
+  }, 10 * 60 * 1000);
+  cleanupTimer.unref?.();
+}
+startCleanupTimer();
 
 function isRateLimited(userId) {
   const now = Date.now();
@@ -44,8 +82,8 @@ function logSuspiciousActivity(userId, reason, details = {}) {
   entry.count++;
   entry.lastSeen = Date.now();
   suspiciousActivityLog.set(key, entry);
-  
-  if (config.nodeEnv === 'production' && entry.count > 5) {
+
+  if (config.isProduction && entry.count > 5) {
     console.warn(`[SECURITY] Suspicious activity detected - User: ${userId}, Reason: ${reason}, Count: ${entry.count}`, details);
   }
 }
@@ -62,6 +100,9 @@ const allowedAttachmentTypes = [
 
 function allowAttachment(file, cb) {
   const mimetype = String(file.mimetype || '');
+  if (mimetype === 'image/svg+xml') {
+    return cb(new Error('SVG-файлы запрещены по соображениям безопасности'));
+  }
   const ok = allowedAttachmentTypes.some((type) => type.endsWith('/') ? mimetype.startsWith(type) : mimetype === type);
   if (!ok) return cb(new Error('Тип файла не разрешён'));
   cb(null, true);
@@ -186,7 +227,7 @@ async function checkJoinRestriction(chatId, userId) {
 
 function classifyAttachment(name = '') {
   const value = String(name || '').toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(value)) return 'photo';
+  if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(value)) return 'photo';
   if (/\.(mp3|ogg|wav|m4a|webm|aac)$/i.test(value)) return 'audio';
   if (/\.(mp4|mov|avi|mkv|webm)$/i.test(value)) return 'video';
   return 'file';
@@ -1041,7 +1082,7 @@ router.delete('/messages/:messageId', async (req, res) => {
     await query('DELETE FROM messages WHERE id = $1', [messageId]);
 
     // Уведомляем об удалении
-    req.app.get('io').to(message.chat_id).emit('message:deleted', { messageId });
+    req.app.get('io').to(message.chat_id).emit('message:deleted', { messageId, chatId: message.chat_id });
     await emitChatRefresh(req.app, message.chat_id);
     
     res.json({ ok: true, messageId, deletedAt: new Date().toISOString() });
