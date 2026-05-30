@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -132,6 +132,19 @@ function sanitizeInput(input) {
  *
  * Для приватных чатов (type = 'private') включаем AES-256-GCM шифрование контента.
  * Для групп и каналов шифрование не используется (сообщения в открытом виде).
+ *
+ * @param {string} chatId - ID чата
+ * @param {string} chatType - 'private' | 'group' | 'channel'
+ * @returns {Promise<string|null>} hex-ключ или null для неприватных чатов
+ */
+/**
+ * Управление ключами server-side шифрования.
+ *
+ * ⚠️ ВАЖНО: Это SERVER-SIDE шифрование, НЕ end-to-end!
+ *
+ * Сервер генерирует и хранит ключи в таблице encryption_keys.
+ * Для приватных чатов (type = 'private') включаем AES-256-GCM шифрование.
+ * Для групп и каналов шифрование не используется.
  *
  * @param {string} chatId - ID чата
  * @param {string} chatType - 'private' | 'group' | 'channel'
