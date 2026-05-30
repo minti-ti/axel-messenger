@@ -22,33 +22,33 @@ const { saveUpload } = require('../storage');
 
 const router = express.Router();
 
-// In-memory счётчики rate-limit. Ограничены по размеру и времени, чтобы не утекали.
+// In-memory ╤Б╤З╤С╤В╤З╨╕╨║╨╕ rate-limit. ╨Ю╨│╤А╨░╨╜╨╕╤З╨╡╨╜╤Л ╨┐╨╛ ╤А╨░╨╖╨╝╨╡╤А╤Г ╨╕ ╨▓╤А╨╡╨╝╨╡╨╜╨╕, ╤З╤В╨╛╨▒╤Л ╨╜╨╡ ╤Г╤В╨╡╨║╨░╨╗╨╕.
 const userMessageBuckets = new Map();
 const suspiciousActivityLog = new Map();
-const RATE_LIMIT_MAX_USERS = 5000;      // защита от утечки памяти
+const RATE_LIMIT_MAX_USERS = 5000;      // ╨╖╨░╤Й╨╕╤В╨░ ╨╛╤В ╤Г╤В╨╡╤З╨║╨╕ ╨┐╨░╨╝╤П╤В╨╕
 const SUSPICIOUS_MAX_KEYS = 2000;
 const { generateEncryptionKey } = require('../encryption');
 
-// Периодически чистим старые записи (раз в 10 минут).
-// Не используем setInterval на require-этапе, чтобы не блокировать выход процесса в тестах.
+// ╨Я╨╡╤А╨╕╨╛╨┤╨╕╤З╨╡╤Б╨║╨╕ ╤З╨╕╤Б╤В╨╕╨╝ ╤Б╤В╨░╤А╤Л╨╡ ╨╖╨░╨┐╨╕╤Б╨╕ (╤А╨░╨╖ ╨▓ 10 ╨╝╨╕╨╜╤Г╤В).
+// ╨Э╨╡ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╨╝ setInterval ╨╜╨░ require-╤Н╤В╨░╨┐╨╡, ╤З╤В╨╛╨▒╤Л ╨╜╨╡ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╤В╤М ╨▓╤Л╤Е╨╛╨┤ ╨┐╤А╨╛╤Ж╨╡╤Б╤Б╨░ ╨▓ ╤В╨╡╤Б╤В╨░╤Е.
 let cleanupTimer = null;
 function startCleanupTimer() {
   if (cleanupTimer) return;
   cleanupTimer = setInterval(() => {
     const now = Date.now();
-    // Чистим старше 1 минуты тАФ лимит работает в окне 15 секунд
+    // ╨з╨╕╤Б╤В╨╕╨╝ ╤Б╤В╨░╤А╤И╨╡ 1 ╨╝╨╕╨╜╤Г╤В╤Л тАФ ╨╗╨╕╨╝╨╕╤В ╤А╨░╨▒╨╛╤В╨░╨╡╤В ╨▓ ╨╛╨║╨╜╨╡ 15 ╤Б╨╡╨║╤Г╨╜╨┤
     for (const [userId, timestamps] of userMessageBuckets) {
       const fresh = timestamps.filter((ts) => now - ts < 60000);
       if (!fresh.length) userMessageBuckets.delete(userId);
       else userMessageBuckets.set(userId, fresh);
     }
-    // Если карты слишком разрослись тАФ удаляем самые старые
+    // ╨Х╤Б╨╗╨╕ ╨║╨░╤А╤В╤Л ╤Б╨╗╨╕╤И╨║╨╛╨╝ ╤А╨░╨╖╤А╨╛╤Б╨╗╨╕╤Б╤М тАФ ╤Г╨┤╨░╨╗╤П╨╡╨╝ ╤Б╨░╨╝╤Л╨╡ ╤Б╤В╨░╤А╤Л╨╡
     if (userMessageBuckets.size > RATE_LIMIT_MAX_USERS) {
       const toDelete = userMessageBuckets.size - RATE_LIMIT_MAX_USERS;
       const keys = Array.from(userMessageBuckets.keys()).slice(0, toDelete);
       keys.forEach((k) => userMessageBuckets.delete(k));
     }
-    // Подозрительные события старше 24 часов тАФ выбрасываем
+    // ╨Я╨╛╨┤╨╛╨╖╤А╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ ╤Б╨╛╨▒╤Л╤В╨╕╤П ╤Б╤В╨░╤А╤И╨╡ 24 ╤З╨░╤Б╨╛╨▓ тАФ ╨▓╤Л╨▒╤А╨░╤Б╤Л╨▓╨░╨╡╨╝
     for (const [key, entry] of suspiciousActivityLog) {
       if (now - (entry.lastSeen || 0) > 24 * 60 * 60 * 1000) {
         suspiciousActivityLog.delete(key);
@@ -102,10 +102,10 @@ const allowedAttachmentTypes = [
 function allowAttachment(file, cb) {
   const mimetype = String(file.mimetype || '');
   if (mimetype === 'image/svg+xml') {
-    return cb(new Error('SVG-файлы запрещены по соображениям безопасности'));
+    return cb(new Error('SVG-╤Д╨░╨╣╨╗╤Л ╨╖╨░╨┐╤А╨╡╤Й╨╡╨╜╤Л ╨┐╨╛ ╤Б╨╛╨╛╨▒╤А╨░╨╢╨╡╨╜╨╕╤П╨╝ ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╜╨╛╤Б╤В╨╕'));
   }
   const ok = allowedAttachmentTypes.some((type) => type.endsWith('/') ? mimetype.startsWith(type) : mimetype === type);
-  if (!ok) return cb(new Error('Тип файла не разрешён'));
+  if (!ok) return cb(new Error('╨в╨╕╨┐ ╤Д╨░╨╣╨╗╨░ ╨╜╨╡ ╤А╨░╨╖╤А╨╡╤И╤С╨╜'));
   cb(null, true);
 }
 
@@ -172,15 +172,7 @@ async function resolveUsers({ memberIds = [], memberPhones = [], memberUsernames
   return [...new Set(resolved)];
 }
 
-// Кэш для getChatPermission на время одного запроса
-const permissionCache = new Map();
-
 async function getChatPermission(chatId, userId) {
-  const cacheKey = `${chatId}:${userId}`;
-  if (permissionCache.has(cacheKey)) {
-    return permissionCache.get(cacheKey);
-  }
-  
   const result = await query(
     `SELECT c.*, cm.role, cm.can_manage_messages, cm.can_add_members, cm.can_pin_messages
      FROM chats c
@@ -188,13 +180,7 @@ async function getChatPermission(chatId, userId) {
      WHERE c.id = $1`,
     [chatId, userId]
   );
-  const permission = result.rows[0] || null;
-  permissionCache.set(cacheKey, permission);
-  
-  // Очищаем кэш через 5 секунд
-  setTimeout(() => permissionCache.delete(cacheKey), 5000);
-  
-  return permission;
+  return result.rows[0] || null;
 }
 
 async function ensureUniqueChatUsername(username, excludeChatId = null) {
@@ -204,7 +190,7 @@ async function ensureUniqueChatUsername(username, excludeChatId = null) {
     excludeChatId ? [username, excludeChatId] : [username]
   );
   if (result.rows[0]) {
-    const error = new Error('Этот username чата уже занят');
+    const error = new Error('╨н╤В╨╛╤В username ╤З╨░╤В╨░ ╤Г╨╢╨╡ ╨╖╨░╨╜╤П╤В');
     error.statusCode = 409;
     throw error;
   }
@@ -242,7 +228,7 @@ async function checkJoinRestriction(chatId, userId) {
   const result = await query('SELECT banned_until, ban_reason FROM chat_members WHERE chat_id = $1 AND user_id = $2', [chatId, userId]);
   const row = result.rows[0];
   if (row?.banned_until && new Date(row.banned_until).getTime() > Date.now()) {
-    return { blocked: true, reason: row.ban_reason || 'Вы заблокированы в этом чате' };
+    return { blocked: true, reason: row.ban_reason || '╨Т╤Л ╨╖╨░╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╨╜╤Л ╨▓ ╤Н╤В╨╛╨╝ ╤З╨░╤В╨╡' };
   }
   return { blocked: false };
 }
@@ -301,13 +287,13 @@ router.get('/search/messages', async (req, res) => {
         chatId: row.chat_id,
         content: row.content,
         createdAt: row.created_at,
-        chatTitle: row.title || (row.type === 'private' ? 'Личный чат' : row.type),
+        chatTitle: row.title || (row.type === 'private' ? '╨Ы╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В' : row.type),
         chatUsername: row.username
       }))
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось выполнить поиск' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨▓╤Л╨┐╨╛╨╗╨╜╨╕╤В╤М ╨┐╨╛╨╕╤Б╨║' });
   }
 });
 
@@ -319,7 +305,7 @@ router.get('/saved', async (req, res) => {
     res.json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось открыть избранное' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨║╤А╤Л╤В╤М ╨╕╨╖╨▒╤А╨░╨╜╨╜╨╛╨╡' });
   }
 });
 
@@ -327,7 +313,7 @@ router.get('/public/:username', async (req, res) => {
   try {
     const username = normalizeUsername(req.params.username);
     const chat = await fetchPublicChatByUsername(username, req.user.id);
-    if (!chat) return res.status(404).json({ error: 'Публичный чат не найден' });
+    if (!chat) return res.status(404).json({ error: '╨Я╤Г╨▒╨╗╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     res.json({
       chat: {
         id: chat.id,
@@ -344,7 +330,7 @@ router.get('/public/:username', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось открыть публичную ссылку' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨║╤А╤Л╤В╤М ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Г╤О ╤Б╤Б╤Л╨╗╨║╤Г' });
   }
 });
 
@@ -352,7 +338,7 @@ router.post('/public/:username/join', async (req, res) => {
   try {
     const username = normalizeUsername(req.params.username);
     const chat = await fetchPublicChatByUsername(username, req.user.id);
-    if (!chat) return res.status(404).json({ error: 'Публичный чат не найден' });
+    if (!chat) return res.status(404).json({ error: '╨Я╤Г╨▒╨╗╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
 
     const restriction = await checkJoinRestriction(chat.id, req.user.id);
     if (restriction.blocked) return res.status(403).json({ error: restriction.reason });
@@ -365,7 +351,7 @@ router.post('/public/:username/join', async (req, res) => {
     res.json({ chat: fullChat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось вступить в чат' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨▓╤Б╤В╤Г╨┐╨╕╤В╤М ╨▓ ╤З╨░╤В' });
   }
 });
 
@@ -382,7 +368,7 @@ router.get('/join/:token', async (req, res) => {
       [token, req.user.id]
     );
     const invite = inviteResult.rows[0];
-    if (!invite) return res.status(404).json({ error: 'Приглашение не найдено или отозвано' });
+    if (!invite) return res.status(404).json({ error: '╨Я╤А╨╕╨│╨╗╨░╤И╨╡╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛ ╨╕╨╗╨╕ ╨╛╤В╨╛╨╖╨▓╨░╨╜╨╛' });
     res.json({
       invite: {
         token: invite.token,
@@ -400,7 +386,7 @@ router.get('/join/:token', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось получить информацию по приглашению' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╨╕╨╜╤Д╨╛╤А╨╝╨░╤Ж╨╕╤О ╨┐╨╛ ╨┐╤А╨╕╨│╨╗╨░╤И╨╡╨╜╨╕╤О' });
   }
 });
 
@@ -415,7 +401,7 @@ router.post('/join/:token', async (req, res) => {
       [token]
     );
     const invite = inviteResult.rows[0];
-    if (!invite) return res.status(404).json({ error: 'Приглашение не найдено или отозвано' });
+    if (!invite) return res.status(404).json({ error: '╨Я╤А╨╕╨│╨╗╨░╤И╨╡╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛ ╨╕╨╗╨╕ ╨╛╤В╨╛╨╖╨▓╨░╨╜╨╛' });
 
     const restriction = await checkJoinRestriction(invite.chat_id, req.user.id);
     if (restriction.blocked) return res.status(403).json({ error: restriction.reason });
@@ -428,7 +414,7 @@ router.post('/join/:token', async (req, res) => {
     res.json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось присоединиться по ссылке' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨┐╤А╨╕╤Б╨╛╨╡╨┤╨╕╨╜╨╕╤В╤М╤Б╤П ╨┐╨╛ ╤Б╤Б╤Л╨╗╨║╨╡' });
   }
 });
 
@@ -437,7 +423,7 @@ router.get('/', async (req, res) => {
     res.json({ chats: await listChats(req.user.id) });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось получить список чатов' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╤Б╨┐╨╕╤Б╨╛╨║ ╤З╨░╤В╨╛╨▓' });
   }
 });
 
@@ -463,7 +449,7 @@ router.post('/private', async (req, res) => {
       targetUserId = userResult.rows[0]?.id || null;
     }
 
-    if (!targetUserId) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (!targetUserId) return res.status(404).json({ error: '╨Я╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤М ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (targetUserId === req.user.id) {
       const savedChatId = await findOrCreateSavedChat(req.user.id);
       const savedChat = await getChatById(savedChatId, req.user.id);
@@ -476,7 +462,7 @@ router.post('/private', async (req, res) => {
     res.json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось создать личный чат' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╤Б╨╛╨╖╨┤╨░╤В╤М ╨╗╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В' });
   }
 });
 
@@ -491,10 +477,10 @@ router.post('/', async (req, res) => {
     const memberPhones = Array.isArray(req.body.memberPhones) ? req.body.memberPhones : [];
     const memberUsernames = Array.isArray(req.body.memberUsernames) ? req.body.memberUsernames : [];
 
-    if (!['group', 'channel'].includes(type)) return res.status(400).json({ error: 'Доступны только group или channel' });
-    if (!title) return res.status(400).json({ error: 'Введите название' });
+    if (!['group', 'channel'].includes(type)) return res.status(400).json({ error: '╨Ф╨╛╤Б╤В╤Г╨┐╨╜╤Л ╤В╨╛╨╗╤М╨║╨╛ group ╨╕╨╗╨╕ channel' });
+    if (!title) return res.status(400).json({ error: '╨Т╨▓╨╡╨┤╨╕╤В╨╡ ╨╜╨░╨╖╨▓╨░╨╜╨╕╨╡' });
     if (username && !isValidUsername(username)) {
-      return res.status(400).json({ error: 'Username должен быть 4-32 символа: ╨╗╨░╤В╨╕╨╜╨╕╤Ж╨░, ╤Ж╨╕╤Д╤А╤Л ╨╕ _' });
+      return res.status(400).json({ error: 'Username ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М 4-32 ╤Б╨╕╨╝╨▓╨╛╨╗╨░: ╨╗╨░╤В╨╕╨╜╨╕╤Ж╨░, ╤Ж╨╕╤Д╤А╤Л ╨╕ _' });
     }
 
     await ensureUniqueChatUsername(username || null);
@@ -512,14 +498,14 @@ router.post('/', async (req, res) => {
     }
 
     const systemMessageId = uuidv4();
-    await query('INSERT INTO messages (id, chat_id, user_id, content, message_type) VALUES ($1, $2, $3, $4, $5)', [systemMessageId, chatId, req.user.id, `${req.user.displayName} создал${type === 'channel' ? ' канал' : ' группу'}`, 'system']);
+    await query('INSERT INTO messages (id, chat_id, user_id, content, message_type) VALUES ($1, $2, $3, $4, $5)', [systemMessageId, chatId, req.user.id, `${req.user.displayName} ╤Б╨╛╨╖╨┤╨░╨╗${type === 'channel' ? ' ╨║╨░╨╜╨░╨╗' : ' ╨│╤А╤Г╨┐╨┐╤Г'}`, 'system']);
 
     const chat = await getChatById(chatId, req.user.id);
     await emitChatRefresh(req.app, chatId);
     res.status(201).json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Не удалось создать чат' });
+    res.status(error.statusCode || 500).json({ error: error.message || '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╤Б╨╛╨╖╨┤╨░╤В╤М ╤З╨░╤В' });
   }
 });
 
@@ -527,7 +513,7 @@ router.get('/username/:username', async (req, res) => {
   try {
     const username = normalizeUsername(req.params.username);
     const publicChat = await fetchPublicChatByUsername(username, req.user.id);
-    if (!publicChat) return res.status(404).json({ error: 'Чат не найден' });
+    if (!publicChat) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (!publicChat.is_member) {
       return res.json({
         publicChat: {
@@ -546,18 +532,18 @@ router.get('/username/:username', async (req, res) => {
     res.json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось открыть чат по username' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╛╤В╨║╤А╤Л╤В╤М ╤З╨░╤В ╨┐╨╛ username' });
   }
 });
 
 router.get('/:chatId', async (req, res) => {
   try {
     const chat = await getChatById(req.params.chatId, req.user.id);
-    if (!chat) return res.status(404).json({ error: 'Чат не найден' });
+    if (!chat) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     res.json({ chat });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось получить данные чата' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╨┤╨░╨╜╨╜╤Л╨╡ ╤З╨░╤В╨░' });
   }
 });
 
@@ -565,7 +551,7 @@ router.delete('/:chatId', async (req, res) => {
   try {
     const { chatId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
 
     if (permission.type === 'private') {
       await query('DELETE FROM chat_members WHERE chat_id = $1 AND user_id = $2', [chatId, req.user.id]);
@@ -586,7 +572,7 @@ router.delete('/:chatId', async (req, res) => {
     res.json({ ok: true, removed: 'membership' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Не удалось удалить чат' });
+    res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╤Г╨┤╨░╨╗╨╕╤В╤М ╤З╨░╤В' });
   }
 });
 
@@ -637,7 +623,7 @@ router.delete('/:chatId/draft', async (req, res) => {
 router.delete('/:chatId/invites/:token', async (req, res) => {
   try {
     const permission = await getChatPermission(req.params.chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Ф╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╤Б╤Б╤Л╨╗╨║╨╕ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╤Л' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
     await query('UPDATE chat_invites SET revoked_at = NOW() WHERE chat_id = $1 AND token = $2', [req.params.chatId, req.params.token]);
@@ -672,8 +658,8 @@ router.patch('/:chatId', async (req, res) => {
   try {
     const { chatId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
-    if (permission.type === 'private') return res.status(400).json({ error: 'Личный чат ╨╜╨╡╨╗╤М╨╖╤П ╤А╨╡╨┤╨░╨║╤В╨╕╤А╨╛╨▓╨░╤В╤М' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
+    if (permission.type === 'private') return res.status(400).json({ error: '╨Ы╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В ╨╜╨╡╨╗╤М╨╖╤П ╤А╨╡╨┤╨░╨║╤В╨╕╤А╨╛╨▓╨░╤В╤М' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
 
     const title = String(req.body.title || '').trim();
@@ -686,7 +672,7 @@ router.patch('/:chatId', async (req, res) => {
     const commentsEnabled = Boolean(req.body.commentsEnabled);
     if (!title) return res.status(400).json({ error: '╨Э╨░╨╖╨▓╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М ╨┐╤Г╤Б╤В╤Л╨╝' });
     if (username && !isValidUsername(username)) {
-      return res.status(400).json({ error: 'Username должен быть 4-32 символа: ╨╗╨░╤В╨╕╨╜╨╕╤Ж╨░, ╤Ж╨╕╤Д╤А╤Л ╨╕ _' });
+      return res.status(400).json({ error: 'Username ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М 4-32 ╤Б╨╕╨╝╨▓╨╛╨╗╨░: ╨╗╨░╤В╨╕╨╜╨╕╤Ж╨░, ╤Ж╨╕╤Д╤А╤Л ╨╕ _' });
     }
     await ensureUniqueChatUsername(username || null, chatId);
 
@@ -707,7 +693,7 @@ router.post('/:chatId/avatar', avatarUpload.single('avatar'), async (req, res) =
   try {
     const { chatId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Ф╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╨░╨▓╨░╤В╨░╤А ╨╝╨╡╨╜╤П╤В╤М ╨╜╨╡╨╗╤М╨╖╤П' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
     if (!req.file) return res.status(400).json({ error: '╨д╨░╨╣╨╗ ╨╜╨╡ ╨▓╤Л╨▒╤А╨░╨╜' });
@@ -726,7 +712,7 @@ router.post('/:chatId/avatar', avatarUpload.single('avatar'), async (req, res) =
 router.get('/:chatId/invites', async (req, res) => {
   try {
     const permission = await getChatPermission(req.params.chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.json({ invites: [] });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
 
@@ -742,7 +728,7 @@ router.post('/:chatId/invites', async (req, res) => {
   try {
     const { chatId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Ф╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╤Б╤Б╤Л╨╗╨║╨╕ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╤Л' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
 
@@ -798,7 +784,7 @@ router.post('/:chatId/members', async (req, res) => {
     const memberPhones = Array.isArray(req.body.memberPhones) ? req.body.memberPhones : [];
     const memberUsernames = Array.isArray(req.body.memberUsernames) ? req.body.memberUsernames : [];
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Т ╨╗╨╕╤З╨╜╤Л╨╣ ╤З╨░╤В ╨╜╨╡╨╗╤М╨╖╤П ╨┤╨╛╨▒╨░╨▓╨╗╤П╤В╤М ╤Г╤З╨░╤Б╤В╨╜╨╕╨║╨╛╨▓' });
     if (!canAddMembers(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
 
@@ -819,7 +805,7 @@ router.patch('/:chatId/members/:memberId', async (req, res) => {
   try {
     const { chatId, memberId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Ф╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╤Н╤В╨╛ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╨╛' });
     if (permission.role !== 'owner') return res.status(403).json({ error: '╨в╨╛╨╗╤М╨║╨╛ ╨▓╨╗╨░╨┤╨╡╨╗╨╡╤Ж ╨╝╨╛╨╢╨╡╤В ╨╝╨╡╨╜╤П╤В╤М ╤А╨╛╨╗╨╕' });
 
@@ -846,7 +832,7 @@ router.patch('/:chatId/members/:memberId/restrictions', async (req, res) => {
   try {
     const { chatId, memberId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
     if (memberId === permission.owner_user_id) return res.status(400).json({ error: '╨Э╨╡╨╗╤М╨╖╤П ╨┐╤А╨╕╨╝╨╡╨╜╤П╤В╤М ╨╛╨│╤А╨░╨╜╨╕╤З╨╡╨╜╨╕╤П ╨║ ╨▓╨╗╨░╨┤╨╡╨╗╤М╤Ж╤Г' });
 
@@ -873,7 +859,7 @@ router.delete('/:chatId/members/:memberId', async (req, res) => {
   try {
     const { chatId, memberId } = req.params;
     const permission = await getChatPermission(chatId, req.user.id);
-    if (!permission) return res.status(404).json({ error: 'Чат не найден' });
+    if (!permission) return res.status(404).json({ error: '╨з╨░╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜' });
     if (permission.type === 'private') return res.status(400).json({ error: '╨Ф╨╗╤П ╨╗╨╕╤З╨╜╨╛╨│╨╛ ╤З╨░╤В╨░ ╤Н╤В╨╛ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╨╛' });
     if (!canManageChat(permission)) return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓' });
     if (memberId === permission.owner_user_id) return res.status(400).json({ error: '╨Э╨╡╨╗╤М╨╖╤П ╤Г╨┤╨░╨╗╨╕╤В╤М ╨▓╨╗╨░╨┤╨╡╨╗╤М╤Ж╨░' });
@@ -972,8 +958,8 @@ router.post('/messages/:messageId/comments', async (req, res) => {
     if (!source) return res.status(404).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛' });
     const permission = await getChatPermission(source.chat_id, req.user.id);
     if (!permission) return res.status(403).json({ error: '╨Э╨╡╤В ╨┤╨╛╤Б╤В╤Г╨┐╨░ ╨║ ╤З╨░╤В╤Г' });
-    if (permission.type !== 'channel') return res.status(400).json({ error: '╨Ъ╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╕ ╨┤╨╛╤Б╤В╤Г╨┐╨╜╤Л ╤В╨╛╨╗╤М╨║╨╛ ╨▓ канал╨░╤Е' });
-    if (!permission.comments_enabled) return res.status(403).json({ error: '╨Ъ╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╕ ╨┤╨╗╤П канал╨░ ╨╛╤В╨║╨╗╤О╤З╨╡╨╜╤Л' });
+    if (permission.type !== 'channel') return res.status(400).json({ error: '╨Ъ╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╕ ╨┤╨╛╤Б╤В╤Г╨┐╨╜╤Л ╤В╨╛╨╗╤М╨║╨╛ ╨▓ ╨║╨░╨╜╨░╨╗╨░╤Е' });
+    if (!permission.comments_enabled) return res.status(403).json({ error: '╨Ъ╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╕ ╨┤╨╗╤П ╨║╨░╨╜╨░╨╗╨░ ╨╛╤В╨║╨╗╤О╤З╨╡╨╜╤Л' });
 
     const messageId = uuidv4();
     await query(
@@ -1011,43 +997,6 @@ router.post('/:chatId/scheduled', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: '╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╨╖╨░╨┐╨╗╨░╨╜╨╕╤А╨╛╨▓╨░╤В╤М ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡' });
-  }
-});
-
-
-router.post('/messages/delete-bulk', async (req, res) => {
-  try {
-    const messageIds = Array.isArray(req.body.messageIds) ? req.body.messageIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
-    if (!messageIds.length) return res.status(400).json({ error: 'Не выбраны сообщения для удаления' });
-
-    const deleted = [];
-    for (const messageId of messageIds) {
-      const result = await query('SELECT * FROM messages WHERE id = $1', [messageId]);
-      const message = result.rows[0];
-      if (!message) continue;
-
-      const permission = await getChatPermission(message.chat_id, req.user.id);
-      if (!permission && !req.user?.isSuperadmin) continue;
-
-      // Логируем
-      const logId = require('uuid').v4();
-      await query(
-        'INSERT INTO message_deletion_logs (id, message_id, chat_id, deleted_by_user_id, deleted_at) VALUES ($1, $2, $3, $4, NOW())',
-        [logId, messageId, message.chat_id, req.user.id]
-      );
-
-      // Soft delete
-      await query('UPDATE messages SET deleted_at = NOW(), content = '', attachment_url = NULL, attachment_name = NULL WHERE id = $1', [messageId]);
-      await query('DELETE FROM reactions WHERE message_id = $1', [messageId]);
-      
-      req.app.get('io').to(message.chat_id).emit('message:deleted', { messageId, chatId: message.chat_id });
-      deleted.push(messageId);
-    }
-
-    res.json({ ok: true, deletedCount: deleted.length, deletedIds: deleted });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Не удалось удалить сообщения' });
   }
 });
 

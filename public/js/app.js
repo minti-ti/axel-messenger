@@ -1254,6 +1254,15 @@ function renderSidebarProfile() {
     ? `<img src="${escapeHtml(state.user.avatarUrl)}" alt="${escapeHtml(state.user.displayName)}" />`
     : escapeHtml(getInitials(state.user.displayName));
   el.drawerModerationBtn.classList.toggle('hidden', !state.user.isSuperadmin);
+  // Добавляем кнопку админ-панели если её нет
+  if (state.user.isSuperadmin && !document.getElementById('drawerAdminBtn')) {
+    const adminBtn = document.createElement('button');
+    adminBtn.id = 'drawerAdminBtn';
+    adminBtn.className = 'drawer-item';
+    adminBtn.innerHTML = '<span class="drawer-icon">⚙️</span><span>Админ-панель</span>';
+    adminBtn.onclick = () => { closeDrawer(); openAdminPanel(); };
+    el.drawerModerationBtn.parentNode.insertBefore(adminBtn, el.drawerModerationBtn.nextSibling);
+  }
 }
 
 function matchesQuery(chat) {
@@ -1503,18 +1512,18 @@ function toggleMessageSelection(messageId) {
 
 async function deleteSelectedMessages() {
   const ids = [...state.selectedMessageIds];
-  let deleted = 0;
-  for (const id of ids) {
-    try {
-      await api(`/api/chats/messages/${id}`, { method: 'DELETE' });
-      deleted += 1;
-    } catch (error) {
-      console.warn('Bulk delete failed', error);
-    }
+  try {
+    const result = await api('/api/chats/messages/delete-bulk', { 
+      method: 'POST', 
+      body: { messageIds: ids } 
+    });
+    clearSelection();
+    render();
+    showToast(`Удалено сообщений: ${result.deletedCount}`);
+  } catch (error) {
+    console.warn('Bulk delete failed', error);
+    showToast('Не удалось удалить сообщения', true);
   }
-  clearSelection();
-  render();
-  showToast(`Удалено сообщений: ${deleted}`);
 }
 
 function renderSelectionBar() {
@@ -3539,6 +3548,130 @@ function connectSocket() {
     state.presence[userId] = { isOnline, at };
     renderChatHeader();
   });
+}
+
+
+async function openAdminPanel() {
+  try {
+    const { users, total } = await api('/api/users/admin/users?limit=50');
+    
+    openModal(
+      'Админ-панель - Пользователи',
+      `
+        <div class="modal-grid">
+          <div class="form-card form-row">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div><strong>Всего пользователей: ${total}</strong></div>
+              <input id="adminSearchInput" type="text" placeholder="Поиск..." style="max-width: 200px;" />
+            </div>
+          </div>
+          <div id="adminUsersList" class="members-box" style="max-height: 400px; overflow-y: auto;">
+            ${users.map(user => `
+              <div class="member-row" data-user-id="${user.id}">
+                <button type="button" class="member-main user-link" data-profile-id="${user.id}">
+                  ${avatarMarkup(user.displayName, user.avatarUrl, 'avatar small')}
+                  <div>
+                    <div><strong>${escapeHtml(user.displayName)}</strong> ${user.isSuperadmin ? '<span style="color: #ff6b6b;">[ADMIN]</span>' : ''}</div>
+                    <div class="muted">${user.username ? '@' + escapeHtml(user.username) + ' · ' : ''}${escapeHtml(user.phone || '')}</div>
+                    <div class="muted">Чатов: ${user.chatsCount} · Сообщений: ${user.messagesCount} · Жалоб: ${user.reportsCount}</div>
+                  </div>
+                </button>
+                <div class="member-actions">
+                  <button type="button" class="ghost-btn small" data-admin-action="edit" data-user-id="${user.id}">Изменить</button>
+                  <button type="button" class="ghost-btn small danger-btn" data-admin-action="block" data-user-id="${user.id}">Блок</button>
+                  <button type="button" class="ghost-btn small danger-btn" data-admin-action="delete" data-user-id="${user.id}">Удалить</button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `
+    );
+    
+    // Обработчики
+    document.querySelectorAll('[data-admin-action="edit"]').forEach(btn => {
+      btn.onclick = async () => {
+        const userId = btn.dataset.userId;
+        const user = users.find(u => u.id === userId);
+        openModal('Редактировать пользователя', `
+          <form class="modal-grid">
+            <div class="form-card form-row">
+              <label>Имя</label>
+              <input name="displayName" value="${escapeValue(user.displayName)}" />
+            </div>
+            <div class="form-card form-row">
+              <label>Username</label>
+              <input name="username" value="${escapeValue(user.username || '')}" />
+            </div>
+            <div class="form-card form-row">
+              <label>О себе</label>
+              <textarea name="bio" rows="3">${escapeValue(user.bio || '')}</textarea>
+            </div>
+            <div class="settings-option">
+              <div><strong>Супер-админ</strong></div>
+              <input class="switch" type="checkbox" name="isSuperadmin" ${user.isSuperadmin ? 'checked' : ''} />
+            </div>
+            <button class="primary-btn" type="submit">Сохранить</button>
+          </form>
+        `, async (formData) => {
+          await api(`/api/users/admin/users/${userId}`, {
+            method: 'PATCH',
+            body: {
+              displayName: formData.get('displayName'),
+              username: formData.get('username'),
+              bio: formData.get('bio'),
+              isSuperadmin: formData.get('isSuperadmin') === 'on'
+            }
+          });
+          closeModal();
+          showToast('Пользователь обновлен');
+          openAdminPanel();
+        });
+      };
+    });
+    
+    document.querySelectorAll('[data-admin-action="block"]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Заблокировать пользователя во всех чатах?')) return;
+        await api(`/api/users/admin/users/${btn.dataset.userId}/block`, {
+          method: 'POST',
+          body: { reason: 'Блокировка администратором', duration: null }
+        });
+        showToast('Пользователь заблокирован');
+      };
+    });
+    
+    document.querySelectorAll('[data-admin-action="delete"]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Удалить аккаунт пользователя? Это действие нельзя отменить!')) return;
+        const hardDelete = confirm('Полное удаление из БД? (ОК = да, Отмена = мягкое удаление)');
+        await api(`/api/users/admin/users/${btn.dataset.userId}`, {
+          method: 'DELETE',
+          body: { hardDelete }
+        });
+        showToast('Пользователь удален');
+        openAdminPanel();
+      };
+    });
+    
+    // Поиск
+    const searchInput = document.getElementById('adminSearchInput');
+    if (searchInput) {
+      searchInput.oninput = async () => {
+        const query = searchInput.value.trim();
+        if (query.length < 2) return;
+        const result = await api(`/api/users/admin/users?search=${encodeURIComponent(query)}&limit=50`);
+        document.getElementById('adminUsersList').innerHTML = result.users.map(user => `
+          <div class="member-row">
+            <div><strong>${escapeHtml(user.displayName)}</strong> ${user.username ? '@' + escapeHtml(user.username) : ''}</div>
+          </div>
+        `).join('');
+      };
+    }
+    
+  } catch (error) {
+    showToast(error.message, true);
+  }
 }
 
 async function bootstrap() {

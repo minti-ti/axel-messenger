@@ -353,6 +353,170 @@ function ensureSuperadmin(req, res) {
   return false;
 }
 
+// === АДМИНИСТРИРОВАНИЕ ===
+
+router.get('/admin/users', async (req, res) => {
+  try {
+    if (!ensureSuperadmin(req, res)) return;
+    
+    const limit = Math.min(Number(req.query.limit || 100), 500);
+    const offset = Number(req.query.offset || 0);
+    const search = String(req.query.search || '').trim();
+    
+    let whereClause = '';
+    let params = [limit, offset];
+    
+    if (search) {
+      whereClause = `WHERE LOWER(u.display_name) LIKE LOWER($3) OR LOWER(u.username) LIKE LOWER($3) OR u.phone LIKE $3`;
+      params.push(`%${search}%`);
+    }
+    
+    const result = await query(
+      `SELECT u.*, 
+              (SELECT COUNT(*) FROM chat_members WHERE user_id = u.id) as chats_count,
+              (SELECT COUNT(*) FROM messages WHERE user_id = u.id AND deleted_at IS NULL) as messages_count,
+              (SELECT COUNT(*) FROM user_reports WHERE reported_user_id = u.id) as reports_count
+       FROM users u
+       ${whereClause}
+       ORDER BY u.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      params
+    );
+    
+    const totalResult = await query(
+      `SELECT COUNT(*) as total FROM users u ${whereClause}`,
+      search ? [`%${search}%`] : []
+    );
+    
+    res.json({ 
+      users: result.rows.map(formatPublicUser).map((u, i) => ({
+        ...u,
+        chatsCount: Number(result.rows[i].chats_count),
+        messagesCount: Number(result.rows[i].messages_count),
+        reportsCount: Number(result.rows[i].reports_count),
+        isSuperadmin: result.rows[i].is_superadmin,
+        createdAt: result.rows[i].created_at,
+        lastSeen: result.rows[i].last_seen
+      })),
+      total: Number(totalResult.rows[0].total)
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось получить список пользователей' });
+  }
+});
+
+router.patch('/admin/users/:userId', async (req, res) => {
+  try {
+    if (!ensureSuperadmin(req, res)) return;
+    
+    const { userId } = req.params;
+    const { isSuperadmin, displayName, username, bio } = req.body;
+    
+    const updates = [];
+    const params = [userId];
+    let paramIndex = 2;
+    
+    if (typeof isSuperadmin === 'boolean') {
+      updates.push(`is_superadmin = $${paramIndex++}`);
+      params.push(isSuperadmin);
+    }
+    if (displayName) {
+      updates.push(`display_name = $${paramIndex++}`);
+      params.push(String(displayName).trim());
+    }
+    if (username !== undefined) {
+      const normalized = normalizeUsername(username);
+      if (normalized) await ensureUniqueUsername(normalized, userId);
+      updates.push(`username = $${paramIndex++}`);
+      params.push(normalized || null);
+    }
+    if (bio !== undefined) {
+      updates.push(`bio = $${paramIndex++}`);
+      params.push(String(bio).trim());
+    }
+    
+    if (!updates.length) {
+      return res.status(400).json({ error: 'Нет данных для обновления' });
+    }
+    
+    const result = await query(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $1 RETURNING *`,
+      params
+    );
+    
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Пользователь не найден' });
+    }
+    
+    res.json({ user: formatPublicUser(result.rows[0]) });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Не удалось обновить пользователя' });
+  }
+});
+
+router.delete('/admin/users/:userId', async (req, res) => {
+  try {
+    if (!ensureSuperadmin(req, res)) return;
+    
+    const { userId } = req.params;
+    const { hardDelete = false } = req.body;
+    
+    if (userId === req.user.id) {
+      return res.status(400).json({ error: 'Нельзя удалить самого себя' });
+    }
+    
+    if (hardDelete) {
+      // Полное удаление (опасно!)
+      await query('DELETE FROM users WHERE id = $1', [userId]);
+    } else {
+      // Мягкое удаление - блокируем аккаунт
+      await query(
+        `UPDATE users SET 
+          display_name = '[Удален] ' || display_name,
+          username = NULL,
+          avatar_url = NULL,
+          bio = 'Аккаунт заблокирован администратором'
+         WHERE id = $1`,
+        [userId]
+      );
+      // Удаляем все сессии
+      await query('UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1', [userId]);
+    }
+    
+    res.json({ ok: true, hardDelete });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось удалить пользователя' });
+  }
+});
+
+router.post('/admin/users/:userId/block', async (req, res) => {
+  try {
+    if (!ensureSuperadmin(req, res)) return;
+    
+    const { userId } = req.params;
+    const { reason = 'Нарушение правил', duration = null } = req.body;
+    
+    // Блокируем во всех чатах
+    const chats = await query('SELECT chat_id FROM chat_members WHERE user_id = $1', [userId]);
+    
+    for (const chat of chats.rows) {
+      const bannedUntil = duration ? new Date(Date.now() + duration * 60000) : new Date('2099-12-31');
+      await query(
+        'UPDATE chat_members SET banned_until = $3, ban_reason = $4 WHERE chat_id = $1 AND user_id = $2',
+        [chat.chat_id, userId, bannedUntil, reason]
+      );
+    }
+    
+    res.json({ ok: true, blockedInChats: chats.rows.length });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось заблокировать пользователя' });
+  }
+});
+
 router.post('/reports', async (req, res) => {
   try {
     const reason = String(req.body.reason || '').trim();
