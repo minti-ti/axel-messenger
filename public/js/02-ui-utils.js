@@ -1067,10 +1067,10 @@ function renderMarkdown(html) {
     .replace(/`([^`]+)`/g, '<code class="md-code">$1</code>')
     // **bold** или *bold*
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(?<![\w*])\*(.+?)\*(?![\w*])/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<strong>$1</strong>')
     // __italic__ или _italic_
     .replace(/__(.+?)__/g, '<em>$1</em>')
-    .replace(/(?<![\w_])_(.+?)_(?![\w_])/g, '<em>$1</em>')
+    .replace(/_(.+?)_/g, '<em>$1</em>')
     // ~~strikethrough~~
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
     // ||spoiler||

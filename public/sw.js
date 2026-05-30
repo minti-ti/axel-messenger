@@ -16,7 +16,7 @@
 
 // Версия кэша — при каждом деплое бампим, чтобы инвалидировать старый кэш.
 // Совпадает с querystring на скриптах в index.html (?v=YYYYMMDD).
-const CACHE_VERSION = 'v20260530b';
+const CACHE_VERSION = 'v20260531';
 const CACHE_NAME = `axel-shell-${CACHE_VERSION}`;
 
 // App-shell: файлы, которые кэшируются при установке SW.
