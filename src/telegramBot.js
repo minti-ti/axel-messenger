@@ -215,8 +215,21 @@ function setupWebhook() {
     headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
   };
 
-  const req = https.request(options, (res) => {
-    res.on('data', () => {});
+  const req = https.request(options, (resp) => {
+    let body = '';
+    resp.on('data', (chunk) => body += chunk);
+    resp.on('end', () => {
+      try {
+        const result = JSON.parse(body);
+        if (result.ok) {
+          console.log('[Telegram Bot] Webhook set OK:', webhookUrl);
+        } else {
+          console.error('[Telegram Bot] Webhook set FAILED:', result.description || body);
+        }
+      } catch (_) {
+        console.error('[Telegram Bot] Webhook response parse error:', body.slice(0, 200));
+      }
+    });
   });
   req.on('error', (error) => console.error('[Telegram Bot] Webhook setup error:', error.message));
   req.write(data);

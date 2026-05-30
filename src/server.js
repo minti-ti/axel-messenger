@@ -302,6 +302,38 @@ app.get('/api/version', (_, res) => {
   });
 });
 
+
+// Диагностика Telegram-бота
+app.get('/api/health/telegram', async (_, res) => {
+  const { botToken, botUsername } = config.telegram;
+  const hasToken = Boolean(botToken && botToken !== 'your_bot_token_here');
+  const result = {
+    hasToken,
+    botUsername: botUsername || '(не задан)',
+    appUrl: config.appUrl,
+    webhookUrl: hasToken ? config.appUrl.replace(/\/+$/, '') + '/telegram/webhook' : null
+  };
+  // Проверим реальный webhook через Telegram API
+  if (hasToken) {
+    try {
+      const https = require('https');
+      const data = await new Promise((resolve, reject) => {
+        const req = https.get('https://api.telegram.org/bot' + botToken + '/getWebhookInfo', (resp) => {
+          let body = '';
+          resp.on('data', (c) => body += c);
+          resp.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve({ raw: body }); } });
+        });
+        req.on('error', reject);
+        setTimeout(() => reject(new Error('timeout')), 5000);
+      });
+      result.telegramWebhookInfo = data.result || data;
+    } catch (e) {
+      result.telegramError = e.message;
+    }
+  }
+  res.json(result);
+});
+
 app.use('/api/public', publicRoutes);
 
 app.use('/api/auth', authLimiter, authRoutes);
