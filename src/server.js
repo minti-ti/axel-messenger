@@ -129,6 +129,11 @@ app.get('/public-chat.js', (_, res) => sendPublicAsset(res, 'public-chat.js', 'a
 // иначе его scope ограничится подпапкой, и pushSubscription из <main>-документа
 // не сможет к нему привязаться. Также важен Service-Worker-Allowed=/ — но т.к.
 // сам файл лежит в корне, scope наследуется автоматически.
+// PWA Manifest
+app.get("/manifest.json", (_, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  sendPublicAsset(res, "manifest.json", "application/manifest+json");
+});
 app.get('/sw.js', (_, res) => {
   res.setHeader('Service-Worker-Allowed', '/');
   res.setHeader('Cache-Control', 'no-cache'); // SW обновляется при каждом релизе
