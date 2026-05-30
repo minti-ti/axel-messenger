@@ -30,17 +30,40 @@ if (IS_PRODUCTION && JWT_SECRET.length < 32) {
 }
 
 function resolveDatabaseUrl() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  const host = process.env.DB_HOST || 'localhost';
-  const port = process.env.DB_PORT || '5432';
-  const name = process.env.DB_NAME || 'messenger';
-  const user = process.env.DB_USER || 'messenger';
-  const password = requireInProduction(
-    'DB_PASSWORD (or DATABASE_URL)',
-    process.env.DB_PASSWORD,
-    { forbiddenDefault: 'messenger' }
-  ) || 'messenger';
-  return `postgresql://${user}:${password}@${host}:${port}/${name}`;
+  let url;
+  if (process.env.DATABASE_URL) {
+    url = process.env.DATABASE_URL;
+  } else {
+    const host = process.env.DB_HOST || 'localhost';
+    const port = process.env.DB_PORT || '5432';
+    const name = process.env.DB_NAME || 'messenger';
+    const user = process.env.DB_USER || 'messenger';
+    const password = requireInProduction(
+      'DB_PASSWORD (or DATABASE_URL)',
+      process.env.DB_PASSWORD,
+      { forbiddenDefault: 'messenger' }
+    ) || 'messenger';
+    url = `postgresql://${user}:${password}@${host}:${port}/${name}`;
+  }
+
+  // Нормализуем sslmode: pg@8.x ругается, что 'require'/'prefer'/'verify-ca'
+  // сейчас работают как 'verify-full', а в pg@9 поведение поменяется на
+  // libpq-совместимое (без проверки цепочки = слабее). Явно фиксируем
+  // verify-full, чтобы:
+  //   1) убрать SECURITY WARNING из логов;
+  //   2) после апгрейда драйвера поведение не деградировало.
+  // Если в URL уже стоит явный 'verify-full' или 'disable' — ничего не делаем.
+  try {
+    const u = new URL(url);
+    const sslmode = u.searchParams.get('sslmode');
+    if (sslmode && /^(require|prefer|verify-ca)$/i.test(sslmode)) {
+      u.searchParams.set('sslmode', 'verify-full');
+      url = u.toString();
+    }
+  } catch (_) {
+    // Невалидный URL — отдадим как есть; pg сам ругнётся понятнее.
+  }
+  return url;
 }
 
 // Список разрешённых origin'ов: основной APP_URL + опциональный APP_URLS
