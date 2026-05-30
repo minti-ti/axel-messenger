@@ -404,7 +404,7 @@ async function processScheduledMessages() {
         webPush: isPushReady(),
         dbHost,
         nodeVersion: process.version
-      }));
+      });
     });
   } catch (error) {
     log.fatal({ err: error }, 'Failed to start application');
