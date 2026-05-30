@@ -1283,11 +1283,10 @@ function getVisibleChats() {
     }
     if (state.chatFilter === 'archive') return chat.archived;
     if (chat.archived) return false;
-    if (state.chatFilter === 'favorite') return chat.favorite;
-    if (state.chatFilter === 'pinned') return chat.pinned;
     if (state.chatFilter === 'private') return chat.type === 'private';
     if (state.chatFilter === 'group') return chat.type === 'group';
     if (state.chatFilter === 'channel') return chat.type === 'channel';
+    if (state.chatFilter === 'pinned') return chat.pinned;
     if (state.chatFilter === 'unread') return Number(chat.unreadCount || 0) > 0;
     return true;
   });
@@ -1385,20 +1384,30 @@ function renderChats({ preserveScroll = true } = {}) {
   }
 
   const pinned = chats.filter((chat) => chat.pinned);
-  const favorites = chats.filter((chat) => !chat.pinned && chat.favorite);
-  const regular = chats.filter((chat) => !chat.pinned && !chat.favorite);
+  const regular = chats.filter((chat) => !chat.pinned);
 
   if (state.chatFilter === 'all' && pinned.length) {
     appendSectionTitle('Закреплённые');
     pinned.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
   }
-  if (state.chatFilter === 'all' && favorites.length) {
-    appendSectionTitle('Избранное');
-    favorites.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
-  }
-  if (state.chatFilter === 'all' && regular.length) {
-    appendSectionTitle('Все чаты');
-    regular.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
+
+  if (state.chatFilter === 'all') {
+    const users = regular.filter(c => c.type === 'private');
+    const groups = regular.filter(c => c.type === 'group');
+    const channels = regular.filter(c => c.type === 'channel');
+
+    if (users.length) {
+      appendSectionTitle('Пользователи');
+      users.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
+    }
+    if (groups.length) {
+      appendSectionTitle('Группы');
+      groups.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
+    }
+    if (channels.length) {
+      appendSectionTitle('Каналы');
+      channels.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
+    }
     return;
   }
   if (state.chatFilter !== 'all') chats.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
@@ -2110,9 +2119,7 @@ function renderReplyBox() {
 
 function renderFilterButtons() {
   el.chatFilters.querySelectorAll('.folder-chip-custom').forEach((button) => button.remove());
-  const favoriteBtn = el.chatFilters.querySelector('[data-filter="favorite"]');
   const archiveBtn = el.chatFilters.querySelector('[data-filter="archive"]');
-  if (favoriteBtn) favoriteBtn.classList.toggle('hidden', state.settings.showFavoriteTab === false);
   if (archiveBtn) archiveBtn.classList.toggle('hidden', state.settings.showArchiveTab === false);
   state.chatFolders.forEach((folder) => {
     const button = document.createElement('button');
@@ -2219,10 +2226,10 @@ function openChatActions(chat) {
           <div class="muted">${chat.username ? '@' + escapeHtml(chat.username) : chat.isSaved ? 'Saved Messages' : chat.type === 'private' && chat.peer?.username ? '@' + escapeHtml(chat.peer.username) : chatTypeLabel(chat)}</div>
         </div>
         <button id="chatTogglePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
-        <button id="chatToggleFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
         <button id="chatToggleArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
         <button id="chatOpenSettingsBtn" class="primary-btn">${chat.type === 'private' ? 'Информация' : 'Настройки чата'}</button>
-        ${chat.isSaved ? '' : `<button id="chatDeleteBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
+        ${chat.isSaved ? '' : `<button id="chatLeaveBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
+        ${!chat.isSaved ? `<button id="chatClearHistoryBtn" class="ghost-btn secondary-btn">Очистить историю</button>` : ''}
       </div>
     `
   );
@@ -2230,14 +2237,6 @@ function openChatActions(chat) {
   document.getElementById('chatTogglePinnedBtn').onclick = async () => {
     try {
       await updateChatPreference(chat, { pinned: !chat.pinned, favorite: chat.favorite, archived: chat.archived });
-      closeModal();
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  };
-  document.getElementById('chatToggleFavoriteBtn').onclick = async () => {
-    try {
-      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
       closeModal();
     } catch (error) {
       showToast(error.message, true);
@@ -2251,15 +2250,34 @@ function openChatActions(chat) {
       showToast(error.message, true);
     }
   };
-  const deleteBtn = document.getElementById('chatDeleteBtn');
+  const deleteBtn = document.getElementById('chatLeaveBtn');
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
-      if (!confirm(chat.type === 'private' ? 'Удалить чат из списка?' : (chat.viewerRole === 'owner' ? 'Удалить чат для всех?' : 'Покинуть чат?'))) return;
+      const isOwner = chat.viewerRole === 'owner';
+      const label = isOwner ? 'Удалить чат для всех?' : (chat.type === 'private' ? 'Удалить чат из списка?' : 'Покинуть чат?');
+      if (!confirm(label)) return;
       try {
         await api(`/api/chats/${chat.id}`, { method: 'DELETE' });
         if (state.currentChat?.id === chat.id) state.currentChat = null;
         closeModal();
         await refreshChats();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    };
+  }
+  const clearBtn = document.getElementById('chatClearHistoryBtn');
+  if (clearBtn) {
+    clearBtn.onclick = async () => {
+      if (!confirm('Вы уверены, что хотите полностью очистить историю переписки?')) return;
+      try {
+        await api(`/api/chats/${chat.id}/clear`, { method: 'DELETE' });
+        if (state.currentChat?.id === chat.id) {
+          state.messagesByChat[chat.id] = [];
+          requestRenderMessages();
+        }
+        closeModal();
+        showToast('История очищена');
       } catch (error) {
         showToast(error.message, true);
       }
@@ -2417,6 +2435,7 @@ async function openUserProfileModal(userId) {
   if (!userId) return;
   if (state.user?.id === userId) return openProfileModal();
   const { user } = await api(`/api/users/${userId}`);
+  const { blocked } = await api(`/api/users/block-status/${userId}`);
   openModal(
     'Профиль пользователя',
     `
@@ -2440,6 +2459,7 @@ async function openUserProfileModal(userId) {
         </div>
         <div class="inline-actions">
           <button id="profileOpenDialogBtn" class="primary-btn">Открыть диалог</button>
+          <button id="profileBlockBtn" class="ghost-btn ${blocked ? 'secondary-btn' : 'danger-btn'}">${blocked ? 'Разблокировать' : 'Заблокировать'}</button>
         </div>
       </div>
     `
@@ -2450,6 +2470,20 @@ async function openUserProfileModal(userId) {
       closeModal();
       await refreshChats();
       await openChat(chat.id);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+  document.getElementById('profileBlockBtn').onclick = async () => {
+    try {
+      if (blocked) {
+        await api(`/api/users/block/${userId}`, { method: 'DELETE' });
+        showToast('Пользователь разблокирован');
+      } else {
+        await api(`/api/users/block`, { method: 'POST', body: { userId } });
+        showToast('Пользователь заблокирован');
+      }
+      openUserProfileModal(userId);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2850,7 +2884,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
           <div class="inline-actions">
             ${!chat.isSaved ? '<button id="privateProfileBtn" class="primary-btn">Открыть профиль</button>' : ''}
             <button id="privatePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
-            <button id="privateFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
             <button id="privateArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
           </div>
           <div class="form-card form-row">
@@ -2868,10 +2901,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
     }
     document.getElementById('privatePinnedBtn').onclick = async () => {
       await updateChatPreference(chat, { pinned: !chat.pinned, favorite: chat.favorite, archived: chat.archived });
-      closeModal();
-    };
-    document.getElementById('privateFavoriteBtn').onclick = async () => {
-      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
       closeModal();
     };
     document.getElementById('privateArchiveBtn').onclick = async () => {

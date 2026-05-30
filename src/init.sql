@@ -1,4 +1,12 @@
+CREATE TABLE IF NOT EXISTS user_blocks (
+  blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (blocker_id, blocked_id)
+);
+
 CREATE TABLE IF NOT EXISTS users (
+
   id TEXT PRIMARY KEY,
   phone TEXT UNIQUE NOT NULL,
   username TEXT,
@@ -62,7 +70,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content TEXT DEFAULT '',
   is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
   encryption_key_version INTEGER DEFAULT 1,
-  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system')),
+  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system', 'voice')),
   attachment_url TEXT,
   attachment_name TEXT,
   reply_to_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,

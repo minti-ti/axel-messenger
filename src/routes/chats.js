@@ -15,7 +15,8 @@ const {
   findOrCreateSavedChat,
   canPostToChat,
   formatMessage,
-  listMessages
+  listMessages,
+  isBlocked
 } = require('../chatService');
 const { saveUpload } = require('../storage');
 
@@ -1204,6 +1205,19 @@ router.post('/:chatId/read', async (req, res) => {
   }
 });
 
+router.delete('/:chatId/clear', async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const member = await isChatMember(chatId, req.user.id);
+    if (!member) return res.status(403).json({ error: 'Вы не состоите в этом чате' });
+    await query('DELETE FROM messages WHERE chat_id = $1 AND user_id = $2', [chatId, req.user.id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось очистить историю' });
+  }
+});
+
 router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res) => {
   try {
     const { chatId } = req.params;
@@ -1216,6 +1230,13 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
       const canComment = chatPermission && chatPermission.type === 'channel' && chatPermission.comments_enabled === true && replyToMessageId;
       if (!canComment) return res.status(403).json({ error: permission.reason });
       permission = { allowed: true, role: chatPermission.role, type: chatPermission.type };
+    }
+
+    if (chatPermission?.type === 'private' && !chatPermission.isSaved) {
+      const peerId = chatPermission.peer_id;
+      if (await isBlocked(peerId, req.user.id)) {
+        return res.status(403).json({ error: 'Вы заблокированы этим пользователем' });
+      }
     }
     
     const files = Array.isArray(req.files) ? req.files : [];
@@ -1257,12 +1278,16 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
         const attachmentName = file.originalname;
         
         let msgContent = i === 0 ? content : '';
+        let msgType = 'file';
+        if (files.length === 1 && !content && String(file.mimetype || '').startsWith('audio/')) {
+          msgType = 'voice';
+        }
         
         await query(
           `INSERT INTO messages
            (id, chat_id, user_id, content, is_encrypted, encryption_key_version, message_type, attachment_url, attachment_name, reply_to_message_id, album_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, 'file', attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
+          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, msgType, attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
         );
         createdMessages.push(await formatMessage(messageId));
       }

@@ -464,6 +464,14 @@ async function listMessages(chatId, userId, limit = 50) {
   return rows.map((msg) => mapMessageRow(msg, reactionsMap));
 }
 
+async function isBlocked(blockerId, blockedId) {
+  const result = await query(
+    'SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2',
+    [blockerId, blockedId]
+  );
+  return result.rows.length > 0;
+}
+
 module.exports = {
   isChatMember,
   getChatById,
@@ -474,5 +482,6 @@ module.exports = {
   canPostToChat,
   formatMessage,
   listMessages,
-  mapChat
+  mapChat,
+  isBlocked
 };

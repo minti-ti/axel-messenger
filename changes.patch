@@ -1,0 +1,365 @@
+diff --git a/public/js/app.js b/public/js/app.js
+index 7fa9eac..c4492dc 100644
+--- a/public/js/app.js
++++ b/public/js/app.js
+@@ -1283,11 +1283,10 @@ function getVisibleChats() {
+     }
+     if (state.chatFilter === 'archive') return chat.archived;
+     if (chat.archived) return false;
+-    if (state.chatFilter === 'favorite') return chat.favorite;
+-    if (state.chatFilter === 'pinned') return chat.pinned;
+     if (state.chatFilter === 'private') return chat.type === 'private';
+     if (state.chatFilter === 'group') return chat.type === 'group';
+     if (state.chatFilter === 'channel') return chat.type === 'channel';
++    if (state.chatFilter === 'pinned') return chat.pinned;
+     if (state.chatFilter === 'unread') return Number(chat.unreadCount || 0) > 0;
+     return true;
+   });
+@@ -1385,20 +1384,30 @@ function renderChats({ preserveScroll = true } = {}) {
+   }
+ 
+   const pinned = chats.filter((chat) => chat.pinned);
+-  const favorites = chats.filter((chat) => !chat.pinned && chat.favorite);
+-  const regular = chats.filter((chat) => !chat.pinned && !chat.favorite);
++  const regular = chats.filter((chat) => !chat.pinned);
+ 
+   if (state.chatFilter === 'all' && pinned.length) {
+     appendSectionTitle('Закреплённые');
+     pinned.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
+   }
+-  if (state.chatFilter === 'all' && favorites.length) {
+-    appendSectionTitle('Избранное');
+-    favorites.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
+-  }
+-  if (state.chatFilter === 'all' && regular.length) {
+-    appendSectionTitle('Все чаты');
+-    regular.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
++
++  if (state.chatFilter === 'all') {
++    const users = regular.filter(c => c.type === 'private');
++    const groups = regular.filter(c => c.type === 'group');
++    const channels = regular.filter(c => c.type === 'channel');
++
++    if (users.length) {
++      appendSectionTitle('Пользователи');
++      users.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
++    }
++    if (groups.length) {
++      appendSectionTitle('Группы');
++      groups.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
++    }
++    if (channels.length) {
++      appendSectionTitle('Каналы');
++      channels.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
++    }
+     return;
+   }
+   if (state.chatFilter !== 'all') chats.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
+@@ -2110,9 +2119,7 @@ function renderReplyBox() {
+ 
+ function renderFilterButtons() {
+   el.chatFilters.querySelectorAll('.folder-chip-custom').forEach((button) => button.remove());
+-  const favoriteBtn = el.chatFilters.querySelector('[data-filter="favorite"]');
+   const archiveBtn = el.chatFilters.querySelector('[data-filter="archive"]');
+-  if (favoriteBtn) favoriteBtn.classList.toggle('hidden', state.settings.showFavoriteTab === false);
+   if (archiveBtn) archiveBtn.classList.toggle('hidden', state.settings.showArchiveTab === false);
+   state.chatFolders.forEach((folder) => {
+     const button = document.createElement('button');
+@@ -2219,10 +2226,10 @@ function openChatActions(chat) {
+           <div class="muted">${chat.username ? '@' + escapeHtml(chat.username) : chat.isSaved ? 'Saved Messages' : chat.type === 'private' && chat.peer?.username ? '@' + escapeHtml(chat.peer.username) : chatTypeLabel(chat)}</div>
+         </div>
+         <button id="chatTogglePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
+-        <button id="chatToggleFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
+         <button id="chatToggleArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
+         <button id="chatOpenSettingsBtn" class="primary-btn">${chat.type === 'private' ? 'Информация' : 'Настройки чата'}</button>
+-        ${chat.isSaved ? '' : `<button id="chatDeleteBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
++        ${chat.isSaved ? '' : `<button id="chatLeaveBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
++        ${!chat.isSaved ? `<button id="chatClearHistoryBtn" class="ghost-btn secondary-btn">Очистить историю</button>` : ''}
+       </div>
+     `
+   );
+@@ -2235,14 +2242,6 @@ function openChatActions(chat) {
+       showToast(error.message, true);
+     }
+   };
+-  document.getElementById('chatToggleFavoriteBtn').onclick = async () => {
+-    try {
+-      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
+-      closeModal();
+-    } catch (error) {
+-      showToast(error.message, true);
+-    }
+-  };
+   document.getElementById('chatToggleArchiveBtn').onclick = async () => {
+     try {
+       await updateChatPreference(chat, { archived: !chat.archived, favorite: chat.favorite, pinned: chat.pinned });
+@@ -2251,10 +2250,12 @@ function openChatActions(chat) {
+       showToast(error.message, true);
+     }
+   };
+-  const deleteBtn = document.getElementById('chatDeleteBtn');
++  const deleteBtn = document.getElementById('chatLeaveBtn');
+   if (deleteBtn) {
+     deleteBtn.onclick = async () => {
+-      if (!confirm(chat.type === 'private' ? 'Удалить чат из списка?' : (chat.viewerRole === 'owner' ? 'Удалить чат для всех?' : 'Покинуть чат?'))) return;
++      const isOwner = chat.viewerRole === 'owner';
++      const label = isOwner ? 'Удалить чат для всех?' : (chat.type === 'private' ? 'Удалить чат из списка?' : 'Покинуть чат?');
++      if (!confirm(label)) return;
+       try {
+         await api(`/api/chats/${chat.id}`, { method: 'DELETE' });
+         if (state.currentChat?.id === chat.id) state.currentChat = null;
+@@ -2265,6 +2266,23 @@ function openChatActions(chat) {
+       }
+     };
+   }
++  const clearBtn = document.getElementById('chatClearHistoryBtn');
++  if (clearBtn) {
++    clearBtn.onclick = async () => {
++      if (!confirm('Вы уверены, что хотите полностью очистить историю переписки?')) return;
++      try {
++        await api(`/api/chats/${chat.id}/clear`, { method: 'DELETE' });
++        if (state.currentChat?.id === chat.id) {
++          state.messagesByChat[chat.id] = [];
++          requestRenderMessages();
++        }
++        closeModal();
++        showToast('История очищена');
++      } catch (error) {
++        showToast(error.message, true);
++      }
++    };
++  }
+   document.getElementById('chatOpenSettingsBtn').onclick = async () => {
+     closeModal();
+     await openChatInfoModal(chat.id);
+@@ -2417,6 +2435,7 @@ async function openUserProfileModal(userId) {
+   if (!userId) return;
+   if (state.user?.id === userId) return openProfileModal();
+   const { user } = await api(`/api/users/${userId}`);
++  const { blocked } = await api(`/api/users/block-status/${userId}`);
+   openModal(
+     'Профиль пользователя',
+     `
+@@ -2440,6 +2459,7 @@ async function openUserProfileModal(userId) {
+         </div>
+         <div class="inline-actions">
+           <button id="profileOpenDialogBtn" class="primary-btn">Открыть диалог</button>
++          <button id="profileBlockBtn" class="ghost-btn ${blocked ? 'secondary-btn' : 'danger-btn'}">${blocked ? 'Разблокировать' : 'Заблокировать'}</button>
+         </div>
+       </div>
+     `
+@@ -2454,6 +2474,20 @@ async function openUserProfileModal(userId) {
+       showToast(error.message, true);
+     }
+   };
++  document.getElementById('profileBlockBtn').onclick = async () => {
++    try {
++      if (blocked) {
++        await api(`/api/users/block/${userId}`, { method: 'DELETE' });
++        showToast('Пользователь разблокирован');
++      } else {
++        await api(`/api/users/block`, { method: 'POST', body: { userId } });
++        showToast('Пользователь заблокирован');
++      }
++      openUserProfileModal(userId);
++    } catch (error) {
++      showToast(error.message, true);
++    }
++  };
+ }
+ 
+ function openProfileModal() {
+@@ -2850,7 +2884,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
+           <div class="inline-actions">
+             ${!chat.isSaved ? '<button id="privateProfileBtn" class="primary-btn">Открыть профиль</button>' : ''}
+             <button id="privatePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
+-            <button id="privateFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
+             <button id="privateArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
+           </div>
+           <div class="form-card form-row">
+@@ -2870,10 +2903,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
+       await updateChatPreference(chat, { pinned: !chat.pinned, favorite: chat.favorite, archived: chat.archived });
+       closeModal();
+     };
+-    document.getElementById('privateFavoriteBtn').onclick = async () => {
+-      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
+-      closeModal();
+-    };
+     document.getElementById('privateArchiveBtn').onclick = async () => {
+       await updateChatPreference(chat, { archived: !chat.archived, favorite: chat.favorite, pinned: chat.pinned });
+       closeModal();
+diff --git a/src/chatService.js b/src/chatService.js
+index 47caee7..290ce89 100644
+--- a/src/chatService.js
++++ b/src/chatService.js
+@@ -464,6 +464,14 @@ async function listMessages(chatId, userId, limit = 50) {
+   return rows.map((msg) => mapMessageRow(msg, reactionsMap));
+ }
+ 
++async function isBlocked(blockerId, blockedId) {
++  const result = await query(
++    'SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2',
++    [blockerId, blockedId]
++  );
++  return result.rows.length > 0;
++}
++
+ module.exports = {
+   isChatMember,
+   getChatById,
+@@ -474,5 +482,6 @@ module.exports = {
+   canPostToChat,
+   formatMessage,
+   listMessages,
+-  mapChat
++  mapChat,
++  isBlocked
+ };
+diff --git a/src/init.sql b/src/init.sql
+index a022f61..cce2210 100644
+--- a/src/init.sql
++++ b/src/init.sql
+@@ -1,4 +1,12 @@
++CREATE TABLE IF NOT EXISTS user_blocks (
++  blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
++  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
++  PRIMARY KEY (blocker_id, blocked_id)
++);
++
+ CREATE TABLE IF NOT EXISTS users (
++
+   id TEXT PRIMARY KEY,
+   phone TEXT UNIQUE NOT NULL,
+   username TEXT,
+@@ -62,7 +70,7 @@ CREATE TABLE IF NOT EXISTS messages (
+   content TEXT DEFAULT '',
+   is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
+   encryption_key_version INTEGER DEFAULT 1,
+-  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system')),
++  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system', 'voice')),
+   attachment_url TEXT,
+   attachment_name TEXT,
+   reply_to_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+diff --git a/src/routes/chats.js b/src/routes/chats.js
+index 003b7bb..e58da89 100644
+--- a/src/routes/chats.js
++++ b/src/routes/chats.js
+@@ -15,7 +15,8 @@ const {
+   findOrCreateSavedChat,
+   canPostToChat,
+   formatMessage,
+-  listMessages
++  listMessages,
++  isBlocked
+ } = require('../chatService');
+ const { saveUpload } = require('../storage');
+ 
+@@ -1204,6 +1205,19 @@ router.post('/:chatId/read', async (req, res) => {
+   }
+ });
+ 
++router.delete('/:chatId/clear', async (req, res) => {
++  try {
++    const { chatId } = req.params;
++    const member = await isChatMember(chatId, req.user.id);
++    if (!member) return res.status(403).json({ error: 'Вы не состоите в этом чате' });
++    await query('DELETE FROM messages WHERE chat_id = $1 AND user_id = $2', [chatId, req.user.id]);
++    res.json({ ok: true });
++  } catch (error) {
++    console.error(error);
++    res.status(500).json({ error: 'Не удалось очистить историю' });
++  }
++});
++
+ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res) => {
+   try {
+     const { chatId } = req.params;
+@@ -1217,6 +1231,13 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
+       if (!canComment) return res.status(403).json({ error: permission.reason });
+       permission = { allowed: true, role: chatPermission.role, type: chatPermission.type };
+     }
++
++    if (chatPermission?.type === 'private' && !chatPermission.isSaved) {
++      const peerId = chatPermission.peer_id;
++      if (await isBlocked(peerId, req.user.id)) {
++        return res.status(403).json({ error: 'Вы заблокированы этим пользователем' });
++      }
++    }
+     
+     const files = Array.isArray(req.files) ? req.files : [];
+     if (!content && !files.length) return res.status(400).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨┐╤Г╤Б╤В╨╛╨╡' });
+@@ -1257,12 +1278,16 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
+         const attachmentName = file.originalname;
+         
+         let msgContent = i === 0 ? content : '';
++        let msgType = 'file';
++        if (files.length === 1 && !content && String(file.mimetype || '').startsWith('audio/')) {
++          msgType = 'voice';
++        }
+         
+         await query(
+           `INSERT INTO messages
+            (id, chat_id, user_id, content, is_encrypted, encryption_key_version, message_type, attachment_url, attachment_name, reply_to_message_id, album_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+-          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, 'file', attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
++          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, msgType, attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
+         );
+         createdMessages.push(await formatMessage(messageId));
+       }
+diff --git a/src/routes/users.js b/src/routes/users.js
+index b69491d..fbc4eac 100644
+--- a/src/routes/users.js
++++ b/src/routes/users.js
+@@ -128,7 +128,51 @@ async function replaceFolders(userId, folders) {
+   }
+ }
+ 
++router.post('/block', async (req, res) => {
++  try {
++    const userId = String(req.body.userId || '').trim();
++    if (!userId) return res.status(400).json({ error: 'Укажите ID пользователя' });
++    if (userId === req.user.id) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
++    await query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.user.id, userId]);
++    res.json({ ok: true });
++  } catch (error) {
++    console.error(error);
++    res.status(500).json({ error: 'Не удалось заблокировать пользователя' });
++  }
++});
++
++router.delete('/block/:userId', async (req, res) => {
++  try {
++    await query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
++    res.json({ ok: true });
++  } catch (error) {
++    console.error(error);
++    res.status(500).json({ error: 'Не удалось разблокировать пользователя' });
++  }
++});
++
++router.get('/blocks', async (req, res) => {
++  try {
++    const result = await query('SELECT blocked_id FROM user_blocks WHERE blocker_id = $1', [req.user.id]);
++    res.json({ blockedIds: result.rows.map(row => row.blocked_id) });
++  } catch (error) {
++    console.error(error);
++    res.status(500).json({ error: 'Не удалось получить список блокировок' });
++  }
++});
++
++router.get('/block-status/:userId', async (req, res) => {
++  try {
++    const result = await query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
++    res.json({ blocked: result.rows.length > 0 });
++  } catch (error) {
++    console.error(error);
++    res.status(500).json({ error: 'Не удалось проверить статус блокировки' });
++  }
++});
++
+ router.get('/public/:username', async (req, res) => {
++
+   try {
+     const username = normalizeUsername(req.params.username);
+     const profile = await loadProfileByUsername(username, null);
