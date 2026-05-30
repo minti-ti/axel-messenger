@@ -524,9 +524,9 @@ el.attachBtn.onclick = () => {
   if (isMobileViewport()) {
     const html = `
       <div style="display: grid; gap: 10px;">
-        <button type="button" class="primary-btn" id="cameraBtn">📷 Фото с камеры</button>
+        <button type="button" class="primary-btn" id="galleryBtn">🖼️ Выбрать из галереи</button>
+        <button type="button" class="secondary-btn" id="cameraBtn">📷 Фото с камеры</button>
         <button type="button" class="secondary-btn" id="videoBtn">🎥 Видео с камеры</button>
-        <button type="button" class="secondary-btn" id="galleryBtn">🖼️ Выбрать из галереи</button>
         <button type="button" class="secondary-btn" id="filesBtn">📎 Другие файлы</button>
       </div>
     `;
@@ -718,4 +718,62 @@ window.addEventListener('orientationchange', () => {
     render();
   }, 180);
 });
+
+// ===================================================================
+// Pull-to-refresh (мобильный свайп вниз для обновления чатов)
+// ===================================================================
+(function initPullToRefresh() {
+  if (!('ontouchstart' in window)) return;
+  let startY = 0;
+  let pulling = false;
+  let indicator = null;
+
+  function getIndicator() {
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.style.cssText = 'position:fixed;top:0;left:0;right:0;height:3px;background:var(--primary);z-index:9999;transform:scaleX(0);transform-origin:left;transition:transform 0.2s;';
+      document.body.appendChild(indicator);
+    }
+    return indicator;
+  }
+
+  const chatList = document.getElementById('chatList');
+  if (!chatList) return;
+
+  chatList.addEventListener('touchstart', (e) => {
+    if (chatList.scrollTop <= 0) {
+      startY = e.touches[0].clientY;
+      pulling = true;
+    }
+  }, { passive: true });
+
+  chatList.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 10 && dy < 150) {
+      getIndicator().style.transform = 'scaleX(' + Math.min(1, dy / 100) + ')';
+    }
+  }, { passive: true });
+
+  chatList.addEventListener('touchend', (e) => {
+    if (!pulling) return;
+    const dy = (e.changedTouches[0]?.clientY || 0) - startY;
+    pulling = false;
+    const ind = getIndicator();
+    if (dy > 80) {
+      ind.style.transform = 'scaleX(1)';
+      if (typeof refreshChats === 'function') {
+        refreshChats().finally(() => {
+          setTimeout(() => { ind.style.transform = 'scaleX(0)'; }, 300);
+        });
+      } else {
+        window.location.reload();
+      }
+    } else {
+      ind.style.transform = 'scaleX(0)';
+    }
+    startY = 0;
+  }, { passive: true });
+})();
+
 bootstrap();

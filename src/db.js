@@ -58,6 +58,15 @@ async function query(text, params = []) {
 async function initDb() {
   const sql = fs.readFileSync(path.join(__dirname, 'init.sql'), 'utf8');
   await pool.query(sql);
+
+  // Миграции: добавляем колонки, которых может не быть в старых БД.
+  // ALTER TABLE ... IF NOT EXISTS гарантирует идемпотентность.
+  const migrations = [
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE"
+  ];
+  for (const migration of migrations) {
+    try { await pool.query(migration); } catch (_) { /* column already exists */ }
+  }
 }
 
 // Проверка соединения для /api/health

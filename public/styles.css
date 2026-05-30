@@ -997,7 +997,7 @@ body {
     left: 12px;
     right: 12px;
     bottom: 92px;
-    z-index: 1600;
+    z-index: 1700;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
@@ -1415,7 +1415,8 @@ body.viewer-open { overflow: hidden; }
 
 /* Отключаем overscroll-bounce на iOS, чтобы список чатов и сообщения
    не «уезжали» вместе с body, когда юзер пытается скроллить за границу. */
-body { overscroll-behavior: contain; }
+body { overscroll-behavior: contain; overflow-x: hidden; }
+html { overflow-x: hidden; }
 .message-list,
 .chat-list { overscroll-behavior: contain; }
 
@@ -1617,5 +1618,20 @@ body { overscroll-behavior: contain; }
   }
   .modal-card {
     margin-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+
+/* Мобильные устройства: запрещаем выделение на элементах сообщений,
+   чтобы long-press не конфликтовал с системным text selection.
+   Текст сообщения всё ещё можно скопировать через контекст-меню. */
+@media (max-width: 920px) {
+  body.mobile-mode .message-row {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  body.mobile-mode .message-content {
+    -webkit-user-select: text;
+    user-select: text;
   }
 }

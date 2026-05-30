@@ -828,11 +828,16 @@ function renderMessages() {
     let longPressTimer = null;
     row.addEventListener('touchstart', (event) => {
       if (state.selectMode || shouldIgnoreMessageContextTarget(event.target)) return;
+      // Не открываем меню если юзер тапнул по .message-content (может хотеть выделить текст)
+      if (event.target.closest('.message-content')) return;
       const touch = event.changedTouches?.[0];
       if (!touch) return;
       longPressTimer = setTimeout(() => {
+        // Проверяем, не выделил ли юзер текст за время ожидания
+        const sel = window.getSelection();
+        if (sel && sel.toString().length > 0) return;
         openMessageContextMenu(message, touch.clientX, touch.clientY);
-      }, 420);
+      }, 550);
     }, { passive: true });
     ['touchend', 'touchcancel', 'touchmove'].forEach((name) => {
       row.addEventListener(name, () => {
