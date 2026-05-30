@@ -1,365 +1,362 @@
+From 49642cae3bb7d39940f86b3561a3516b7880c1c5 Mon Sep 17 00:00:00 2001
+From: Arena Agent <agent@arena.ai>
+Date: Sat, 30 May 2026 09:07:13 +0000
+Subject: [PATCH] =?UTF-8?q?feat:=20'=D0=98=D0=B7=D0=B1=D1=80=D0=B0=D0=BD?=
+ =?UTF-8?q?=D0=BD=D0=BE=D0=B5'=20=D0=BE=D1=82=D0=BA=D1=80=D1=8B=D0=B2?=
+ =?UTF-8?q?=D0=B0=D0=B5=D1=82=20=D1=87=D0=B0=D1=82,=20=D0=BC=D1=83=D0=BB?=
+ =?UTF-8?q?=D1=8C=D1=82=D0=B8-=D0=B2=D1=8B=D0=B1=D0=BE=D1=80/=D1=83=D0=B4?=
+ =?UTF-8?q?=D0=B0=D0=BB=D0=B5=D0=BD=D0=B8=D0=B5=20=D1=81=D0=BE=D0=BE=D0=B1?=
+ =?UTF-8?q?=D1=89=D0=B5=D0=BD=D0=B8=D0=B9,=20=D0=BC=D0=BE=D0=B4=D0=B5?=
+ =?UTF-8?q?=D1=80=D0=B0=D1=86=D0=B8=D1=8F:=20=D0=B8=D0=B7=D0=BC=D0=B5?=
+ =?UTF-8?q?=D0=BD=D0=B8=D1=82=D1=8C/=D1=83=D0=B4=D0=B0=D0=BB=D0=B8=D1=82?=
+ =?UTF-8?q?=D1=8C=20=D1=81=D0=BE=D0=BE=D0=B1=D1=89=D0=B5=D0=BD=D0=B8=D0=B5?=
+ =?UTF-8?q?=20=D0=B8=D0=B7=20=D0=B6=D0=B0=D0=BB=D0=BE=D0=B1=D1=8B?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Кнопка 'Избранное' (и в шапке списка чатов, и в меню) теперь открывает чат Saved Messages, а не фильтр по избранным чатам.
+- В контекстном меню сообщения добавлен пункт 'Выбрать' (включает режим множественного выбора).
+- Кнопка 'Выбрать' (☑) в панели инструментов сообщения теперь показывается всегда и сама включает режим выбора, что позволяет удобно выделить несколько сообщений и затем удалить их одним действием.
+- Удаление сообщений в чате теперь доступно любому участнику (не только автору и модератору) — обновлены и UI, и серверная проверка прав.
+- В модерационном чате к карточке жалобы добавлены две кнопки: 'Изменить сообщение' (открывает редактор именно того сообщения, на которое отправлена жалоба) и 'Удалить сообщение' (удаляет это сообщение и помечает жалобу как решённую).
+- Добавлен серверный эндпоинт GET /api/chats/messages/:messageId для получения одного сообщения (используется модерацией).
+- Суперадмин (модератор) теперь может изменять/удалять сообщение из любого чата, в т.ч. в котором он не состоит — необходимо для обработки жалоб.
+---
+ public/index.html   |   2 +-
+ public/js/app.js    | 154 +++++++++++++++++++++++++++++++++++++++-----
+ src/routes/chats.js |  42 ++++++++++--
+ 3 files changed, 175 insertions(+), 23 deletions(-)
+
+diff --git a/public/index.html b/public/index.html
+index 514be64..1fd7858 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -83,7 +83,7 @@
+           </div>
+           <div id="chatFilters" class="chat-filters">
+             <button class="filter-chip active" data-filter="all">Все</button>
+-            <button class="filter-chip" data-filter="favorite">Избранные</button>
++            <button class="filter-chip" data-filter="saved" title="Открыть чат Избранное">Избранное</button>
+             <button class="filter-chip" data-filter="archive">Архив</button>
+           </div>
+         </header>
 diff --git a/public/js/app.js b/public/js/app.js
-index 7fa9eac..c4492dc 100644
+index c4492dc..4d333c1 100644
 --- a/public/js/app.js
 +++ b/public/js/app.js
-@@ -1283,11 +1283,10 @@ function getVisibleChats() {
-     }
-     if (state.chatFilter === 'archive') return chat.archived;
-     if (chat.archived) return false;
--    if (state.chatFilter === 'favorite') return chat.favorite;
--    if (state.chatFilter === 'pinned') return chat.pinned;
-     if (state.chatFilter === 'private') return chat.type === 'private';
-     if (state.chatFilter === 'group') return chat.type === 'group';
-     if (state.chatFilter === 'channel') return chat.type === 'channel';
-+    if (state.chatFilter === 'pinned') return chat.pinned;
-     if (state.chatFilter === 'unread') return Number(chat.unreadCount || 0) > 0;
-     return true;
-   });
-@@ -1385,20 +1384,30 @@ function renderChats({ preserveScroll = true } = {}) {
-   }
- 
-   const pinned = chats.filter((chat) => chat.pinned);
--  const favorites = chats.filter((chat) => !chat.pinned && chat.favorite);
--  const regular = chats.filter((chat) => !chat.pinned && !chat.favorite);
-+  const regular = chats.filter((chat) => !chat.pinned);
- 
-   if (state.chatFilter === 'all' && pinned.length) {
-     appendSectionTitle('Закреплённые');
-     pinned.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
-   }
--  if (state.chatFilter === 'all' && favorites.length) {
--    appendSectionTitle('Избранное');
--    favorites.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
--  }
--  if (state.chatFilter === 'all' && regular.length) {
--    appendSectionTitle('Все чаты');
--    regular.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
-+
-+  if (state.chatFilter === 'all') {
-+    const users = regular.filter(c => c.type === 'private');
-+    const groups = regular.filter(c => c.type === 'group');
-+    const channels = regular.filter(c => c.type === 'channel');
-+
-+    if (users.length) {
-+      appendSectionTitle('Пользователи');
-+      users.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
-+    }
-+    if (groups.length) {
-+      appendSectionTitle('Группы');
-+      groups.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
-+    }
-+    if (channels.length) {
-+      appendSectionTitle('Каналы');
-+      channels.forEach(chat => el.chatList.appendChild(createChatCard(chat)));
-+    }
-     return;
-   }
-   if (state.chatFilter !== 'all') chats.forEach((chat) => el.chatList.appendChild(createChatCard(chat)));
-@@ -2110,9 +2119,7 @@ function renderReplyBox() {
- 
- function renderFilterButtons() {
-   el.chatFilters.querySelectorAll('.folder-chip-custom').forEach((button) => button.remove());
--  const favoriteBtn = el.chatFilters.querySelector('[data-filter="favorite"]');
-   const archiveBtn = el.chatFilters.querySelector('[data-filter="archive"]');
--  if (favoriteBtn) favoriteBtn.classList.toggle('hidden', state.settings.showFavoriteTab === false);
-   if (archiveBtn) archiveBtn.classList.toggle('hidden', state.settings.showArchiveTab === false);
-   state.chatFolders.forEach((folder) => {
-     const button = document.createElement('button');
-@@ -2219,10 +2226,10 @@ function openChatActions(chat) {
-           <div class="muted">${chat.username ? '@' + escapeHtml(chat.username) : chat.isSaved ? 'Saved Messages' : chat.type === 'private' && chat.peer?.username ? '@' + escapeHtml(chat.peer.username) : chatTypeLabel(chat)}</div>
-         </div>
-         <button id="chatTogglePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
--        <button id="chatToggleFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
-         <button id="chatToggleArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
-         <button id="chatOpenSettingsBtn" class="primary-btn">${chat.type === 'private' ? 'Информация' : 'Настройки чата'}</button>
--        ${chat.isSaved ? '' : `<button id="chatDeleteBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
-+        ${chat.isSaved ? '' : `<button id="chatLeaveBtn" class="ghost-btn danger-btn">${chat.type === 'private' ? 'Удалить чат' : chat.viewerRole === 'owner' ? 'Удалить чат' : 'Покинуть чат'}</button>`}
-+        ${!chat.isSaved ? `<button id="chatClearHistoryBtn" class="ghost-btn secondary-btn">Очистить историю</button>` : ''}
-       </div>
-     `
+@@ -1683,6 +1683,39 @@ function openMessageEditor(message) {
    );
-@@ -2235,14 +2242,6 @@ function openChatActions(chat) {
-       showToast(error.message, true);
-     }
-   };
--  document.getElementById('chatToggleFavoriteBtn').onclick = async () => {
--    try {
--      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
--      closeModal();
--    } catch (error) {
--      showToast(error.message, true);
--    }
--  };
-   document.getElementById('chatToggleArchiveBtn').onclick = async () => {
-     try {
-       await updateChatPreference(chat, { archived: !chat.archived, favorite: chat.favorite, pinned: chat.pinned });
-@@ -2251,10 +2250,12 @@ function openChatActions(chat) {
-       showToast(error.message, true);
-     }
-   };
--  const deleteBtn = document.getElementById('chatDeleteBtn');
-+  const deleteBtn = document.getElementById('chatLeaveBtn');
-   if (deleteBtn) {
-     deleteBtn.onclick = async () => {
--      if (!confirm(chat.type === 'private' ? 'Удалить чат из списка?' : (chat.viewerRole === 'owner' ? 'Удалить чат для всех?' : 'Покинуть чат?'))) return;
-+      const isOwner = chat.viewerRole === 'owner';
-+      const label = isOwner ? 'Удалить чат для всех?' : (chat.type === 'private' ? 'Удалить чат из списка?' : 'Покинуть чат?');
-+      if (!confirm(label)) return;
-       try {
-         await api(`/api/chats/${chat.id}`, { method: 'DELETE' });
-         if (state.currentChat?.id === chat.id) state.currentChat = null;
-@@ -2265,6 +2266,23 @@ function openChatActions(chat) {
-       }
-     };
-   }
-+  const clearBtn = document.getElementById('chatClearHistoryBtn');
-+  if (clearBtn) {
-+    clearBtn.onclick = async () => {
-+      if (!confirm('Вы уверены, что хотите полностью очистить историю переписки?')) return;
-+      try {
-+        await api(`/api/chats/${chat.id}/clear`, { method: 'DELETE' });
-+        if (state.currentChat?.id === chat.id) {
-+          state.messagesByChat[chat.id] = [];
-+          requestRenderMessages();
+ }
+ 
++// Открывает редактор сообщения для модерационной карточки.
++// Используется, когда модератор хочет изменить сообщение из жалобы,
++// при этом самого сообщения может не быть в памяти текущего чата.
++async function openModerationMessageEditor(messageId) {
++  let initialContent = '';
++  try {
++    const { message } = await api(`/api/chats/messages/${messageId}`);
++    if (message && typeof message.content === 'string') initialContent = message.content;
++  } catch (error) {
++    // Если не удалось получить — всё равно покажем пустой редактор.
++    console.warn('Cannot load reported message for moderation editor', error);
++  }
++  openModal(
++    'Редактирование сообщения (модерация)',
++    `
++      <form class="modal-grid">
++        <div class="form-card form-row">
++          <label>Текст сообщения</label>
++          <textarea name="content" rows="6">${escapeValue(initialContent)}</textarea>
++        </div>
++        <div class="muted">Сообщение будет изменено в исходном чате от лица его автора.</div>
++        <button class="primary-btn" type="submit">Сохранить</button>
++      </form>
++    `,
++    async (formData) => {
++      const content = String(formData.get('content') || '');
++      await api(`/api/chats/messages/${messageId}`, { method: 'PATCH', body: { content } });
++      closeModal();
++      showToast('Сообщение обновлено');
++    }
++  );
++}
++
+ function openScheduleModal() {
+   if (!state.currentChat) return;
+   if (state.pendingFiles.length) {
+@@ -1786,10 +1819,22 @@ function openReactionPickerForMessage(message) {
+ }
+ 
+ function openMessageContextMenu(message, x, y) {
++  // Редактировать имеет право только автор или модератор.
+   const canEdit = !message.deletedAt && (message.userId === state.user.id || canModerateMessagesInCurrentChat());
++  // Удалить теперь разрешено любому участнику чата (любое сообщение).
++  const canDelete = !message.deletedAt;
+   const items = [
+     { label: '↩ Ответить', onClick: () => { state.replyTo = message; renderReplyBox(); el.messageInput.focus(); } },
+     { label: '⇢ Переслать', onClick: () => forwardMessage(message.id).catch((error) => showToast(error.message, true)) },
++    { label: '☑ Выбрать', onClick: () => {
++        // Включаем режим множественного выбора и сразу помечаем это сообщение.
++        if (!state.selectMode) state.selectMode = true;
++        if (!state.selectedMessageIds.includes(message.id)) {
++          state.selectedMessageIds = [...state.selectedMessageIds, message.id];
 +        }
-+        closeModal();
-+        showToast('История очищена');
++        renderSelectionBar();
++        requestRenderMessages();
++      } },
+     { label: '😊 Реакции', onClick: () => openReactionPickerForMessage(message) },
+     { label: '⚠ Пожаловаться', onClick: () => openReportModal({ reportedUserId: message.author.id, chatId: message.chatId, messageId: message.id }) }
+   ];
+@@ -1798,7 +1843,14 @@ function openMessageContextMenu(message, x, y) {
+   }
+   if (canPinCurrentChat()) items.push({ label: '📌 Закрепить сообщение', onClick: () => pinMessage(message.id).catch((error) => showToast(error.message, true)) });
+   if (canEdit) items.push({ label: '✎ Редактировать', onClick: () => openMessageEditor(message) });
+-  if (canEdit) items.push({ label: '🗑 Удалить', danger: true, onClick: async () => { if (!confirm('Удалить сообщение?')) return; await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' }); } });
++  if (canDelete) items.push({ label: '🗑 Удалить', danger: true, onClick: async () => {
++      if (!confirm('Удалить сообщение?')) return;
++      try {
++        await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
 +      } catch (error) {
 +        showToast(error.message, true);
 +      }
-+    };
-+  }
-   document.getElementById('chatOpenSettingsBtn').onclick = async () => {
-     closeModal();
-     await openChatInfoModal(chat.id);
-@@ -2417,6 +2435,7 @@ async function openUserProfileModal(userId) {
-   if (!userId) return;
-   if (state.user?.id === userId) return openProfileModal();
-   const { user } = await api(`/api/users/${userId}`);
-+  const { blocked } = await api(`/api/users/block-status/${userId}`);
-   openModal(
-     'Профиль пользователя',
-     `
-@@ -2440,6 +2459,7 @@ async function openUserProfileModal(userId) {
-         </div>
-         <div class="inline-actions">
-           <button id="profileOpenDialogBtn" class="primary-btn">Открыть диалог</button>
-+          <button id="profileBlockBtn" class="ghost-btn ${blocked ? 'secondary-btn' : 'danger-btn'}">${blocked ? 'Разблокировать' : 'Заблокировать'}</button>
-         </div>
-       </div>
-     `
-@@ -2454,6 +2474,20 @@ async function openUserProfileModal(userId) {
-       showToast(error.message, true);
-     }
-   };
-+  document.getElementById('profileBlockBtn').onclick = async () => {
-+    try {
-+      if (blocked) {
-+        await api(`/api/users/block/${userId}`, { method: 'DELETE' });
-+        showToast('Пользователь разблокирован');
-+      } else {
-+        await api(`/api/users/block`, { method: 'POST', body: { userId } });
-+        showToast('Пользователь заблокирован');
-+      }
-+      openUserProfileModal(userId);
-+    } catch (error) {
-+      showToast(error.message, true);
-+    }
-+  };
++    } });
+   openContextMenu(items, x, y);
  }
  
- function openProfileModal() {
-@@ -2850,7 +2884,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
-           <div class="inline-actions">
-             ${!chat.isSaved ? '<button id="privateProfileBtn" class="primary-btn">Открыть профиль</button>' : ''}
-             <button id="privatePinnedBtn" class="secondary-btn">${chat.pinned ? 'Открепить чат' : 'Закрепить чат'}</button>
--            <button id="privateFavoriteBtn" class="secondary-btn">${chat.favorite ? 'Убрать из избранного' : 'Добавить в избранное'}</button>
-             <button id="privateArchiveBtn" class="secondary-btn">${chat.archived ? 'Вернуть из архива' : 'Отправить в архив'}</button>
+@@ -1868,6 +1920,8 @@ function renderMessages() {
+     const message = albumMessages ? albumMessages[0] : entry.message;
+     const grouped = groupReactions(message.reactions);
+     const canEdit = !message.deletedAt && (message.userId === state.user.id || canModerateMessagesInCurrentChat());
++    // Удаление разрешено всем участникам чата (для своих и чужих сообщений).
++    const canDelete = !message.deletedAt;
+     const canPin = canPinCurrentChat() && !message.deletedAt;
+     const selected = albumMessages
+       ? albumMessages.some((item) => state.selectedMessageIds.includes(item.id))
+@@ -1890,10 +1944,10 @@ function renderMessages() {
+           <button class="msg-tool reply-btn" title="Ответить">↩</button>
+           <button class="msg-tool react-toggle-btn" title="Реакция">😊</button>
+           <button class="msg-tool forward-btn" title="Переслать">⇢</button>
+-          ${state.selectMode ? '<button class="msg-tool select-btn" title="Выбрать">☑</button>' : ''}
++          <button class="msg-tool select-btn" title="Выбрать">☑</button>
+           ${canPin ? '<button class="msg-tool pin-btn" title="Закрепить">📌</button>' : ''}
+           ${canEdit && !albumMessages ? '<button class="msg-tool edit-btn" title="Изменить">✎</button>' : ''}
+-          ${canEdit ? '<button class="msg-tool delete-btn" title="Удалить">🗑</button>' : ''}
++          ${canDelete ? '<button class="msg-tool delete-btn" title="Удалить">🗑</button>' : ''}
+           <div class="reaction-picker hidden">
+             ${COMMON_REACTIONS.map((emoji) => `<button type="button" class="reaction-option" data-emoji="${emoji}">${emoji}</button>`).join('')}
            </div>
-           <div class="form-card form-row">
-@@ -2870,10 +2903,6 @@ async function openChatInfoModal(chatId = state.currentChat?.id) {
-       await updateChatPreference(chat, { pinned: !chat.pinned, favorite: chat.favorite, archived: chat.archived });
-       closeModal();
-     };
--    document.getElementById('privateFavoriteBtn').onclick = async () => {
--      await updateChatPreference(chat, { favorite: !chat.favorite, archived: chat.archived, pinned: chat.pinned });
--      closeModal();
--    };
-     document.getElementById('privateArchiveBtn').onclick = async () => {
-       await updateChatPreference(chat, { archived: !chat.archived, favorite: chat.favorite, pinned: chat.pinned });
-       closeModal();
-diff --git a/src/chatService.js b/src/chatService.js
-index 47caee7..290ce89 100644
---- a/src/chatService.js
-+++ b/src/chatService.js
-@@ -464,6 +464,14 @@ async function listMessages(chatId, userId, limit = 50) {
-   return rows.map((msg) => mapMessageRow(msg, reactionsMap));
- }
+@@ -1909,6 +1963,8 @@ function renderMessages() {
+             <button type="button" class="secondary-btn report-quick-action" data-report-id="${message.report.id}" data-action="resolve">Решено</button>
+             <button type="button" class="ghost-btn danger-btn report-quick-action" data-report-id="${message.report.id}" data-action="dismiss">Отклонить</button>
+             ${message.report.reportedUserId ? `<button type=\"button\" class=\"secondary-btn report-open-profile\" data-profile-id=\"${message.report.reportedUserId}\">Профиль</button>` : ''}
++            ${message.report.messageId ? `<button type=\"button\" class=\"secondary-btn report-edit-message\" data-message-id=\"${message.report.messageId}\" data-chat-id=\"${message.report.chatId || ''}\">✎ Изменить сообщение</button>` : ''}
++            ${message.report.messageId ? `<button type=\"button\" class=\"ghost-btn danger-btn report-delete-message\" data-message-id=\"${message.report.messageId}\" data-report-id=\"${message.report.id}\">🗑 Удалить сообщение</button>` : ''}
+             ${message.report.chatId && message.report.reportedUserId ? `<button type=\"button\" class=\"ghost-btn danger-btn report-quick-action\" data-report-id=\"${message.report.id}\" data-action=\"mute_60\">Мут 60м</button><button type=\"button\" class=\"ghost-btn danger-btn report-quick-action\" data-report-id=\"${message.report.id}\" data-action=\"ban_1440\">Бан 24ч</button>` : ''}
+           </div>
+         </div>` : ''}
+@@ -1981,11 +2037,15 @@ function renderMessages() {
+     if (selectBtn) {
+       selectBtn.onclick = (event) => {
+         event.stopPropagation();
++        // Автоматически включаем режим множественного выбора, если он ещё выключен.
++        if (!state.selectMode) state.selectMode = true;
+         if (albumMessages) {
+           albumMessages.forEach((item) => toggleMessageSelection(item.id));
+         } else {
+           toggleMessageSelection(message.id);
+         }
++        renderSelectionBar();
++        requestRenderMessages();
+       };
+     }
  
-+async function isBlocked(blockerId, blockedId) {
-+  const result = await query(
-+    'SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2',
-+    [blockerId, blockedId]
-+  );
-+  return result.rows.length > 0;
-+}
-+
- module.exports = {
-   isChatMember,
-   getChatById,
-@@ -474,5 +482,6 @@ module.exports = {
-   canPostToChat,
-   formatMessage,
-   listMessages,
--  mapChat
-+  mapChat,
-+  isBlocked
+@@ -2050,6 +2110,38 @@ function renderMessages() {
+     row.querySelectorAll('.report-open-profile').forEach((button) => {
+       button.onclick = () => openUserProfileModal(button.dataset.profileId).catch((error) => showToast(error.message, true));
+     });
++    // Кнопка модерации "Удалить сообщение" — удаляет именно то сообщение,
++    // на которое отправлена жалоба.
++    row.querySelectorAll('.report-delete-message').forEach((button) => {
++      button.onclick = async (event) => {
++        event.stopPropagation();
++        if (!button.dataset.messageId) return;
++        if (!confirm('Удалить сообщение, на которое отправлена жалоба?')) return;
++        try {
++          await api(`/api/chats/messages/${button.dataset.messageId}`, { method: 'DELETE' });
++          // Помечаем жалобу как решённую, чтобы она не висела в списке.
++          if (button.dataset.reportId) {
++            try { await applyModerationAction(button.dataset.reportId, 'resolve'); } catch {}
++          }
++          showToast('Сообщение удалено');
++        } catch (error) {
++          showToast(error.message, true);
++        }
++      };
++    });
++    // Кнопка модерации "Изменить сообщение" — открывает модалку
++    // редактирования сообщения, на которое отправлена жалоба.
++    row.querySelectorAll('.report-edit-message').forEach((button) => {
++      button.onclick = async (event) => {
++        event.stopPropagation();
++        if (!button.dataset.messageId) return;
++        try {
++          openModerationMessageEditor(button.dataset.messageId);
++        } catch (error) {
++          showToast(error.message, true);
++        }
++      };
++    });
+ 
+     const authorBtn = row.querySelector('[data-author-id]');
+     if (authorBtn) authorBtn.onclick = () => openUserProfileModal(authorBtn.dataset.authorId).catch((error) => showToast(error.message, true));
+@@ -2064,19 +2156,23 @@ function renderMessages() {
+         openMessageEditor(message);
+       };
+     }
+-    if (canEdit) {
+-      row.querySelector('.delete-btn').onclick = async () => {
+-        if (!confirm(albumMessages ? 'Удалить весь альбом?' : 'Удалить сообщение?')) return;
+-        try {
+-          if (albumMessages) {
+-            for (const item of albumMessages) await api(`/api/chats/messages/${item.id}`, { method: 'DELETE' });
+-          } else {
+-            await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
++    if (canDelete) {
++      const deleteBtn = row.querySelector('.delete-btn');
++      if (deleteBtn) {
++        deleteBtn.onclick = async (event) => {
++          event.stopPropagation();
++          if (!confirm(albumMessages ? 'Удалить весь альбом?' : 'Удалить сообщение?')) return;
++          try {
++            if (albumMessages) {
++              for (const item of albumMessages) await api(`/api/chats/messages/${item.id}`, { method: 'DELETE' });
++            } else {
++              await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
++            }
++          } catch (error) {
++            showToast(error.message, true);
+           }
+-        } catch (error) {
+-          showToast(error.message, true);
+-        }
+-      };
++        };
++      }
+     }
+ 
+     fragment.appendChild(row);
+@@ -3594,7 +3690,12 @@ el.drawerModerationBtn.onclick = () => { openModerationChat().catch((error) => s
+ el.drawerSavedBtn.onclick = () => { closeDrawer(); openSavedMessages().catch((error) => showToast(error.message, true)); };
+ el.drawerSearchMessagesBtn.onclick = () => { closeDrawer(); openMessageSearchModal(); };
+ el.drawerFoldersBtn.onclick = () => { closeDrawer(); openFoldersModal(); };
+-el.drawerFavoritesBtn.onclick = () => { state.chatFilter = 'favorite'; closeDrawer(); render(); };
++el.drawerFavoritesBtn.onclick = () => {
++  // Кнопка "Избранное" в меню тоже ведёт в чат "Избранное" (Saved Messages),
++  // а не в фильтр по избранным чатам.
++  closeDrawer();
++  openSavedMessages().catch((error) => showToast(error.message, true));
++};
+ el.drawerArchiveBtn.onclick = () => { state.chatFilter = 'archive'; closeDrawer(); render(); };
+ el.drawerLogoutBtn.onclick = async () => {
+   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+@@ -3604,6 +3705,27 @@ el.drawerLogoutBtn.onclick = async () => {
+ el.chatFilters.onclick = (event) => {
+   const button = event.target.closest('[data-filter]');
+   if (!button) return;
++  // Специальное поведение для "Избранное" — открываем чат с самим собой
++  // (Saved Messages), а не фильтр по чатам, помеченным как избранные.
++  if (button.dataset.filter === 'saved') {
++    // Снимаем активность с других чипов и выделяем этот.
++    el.chatFilters.querySelectorAll('[data-filter]').forEach((node) => node.classList.remove('active'));
++    button.classList.add('active');
++    openSavedMessages()
++      .catch((error) => showToast(error.message, true))
++      .finally(() => {
++        // После открытия чата возвращаем фильтр списка к "Все",
++        // чтобы пользователь видел все чаты, а не только Saved.
++        const allChip = el.chatFilters.querySelector('[data-filter="all"]');
++        if (allChip) {
++          el.chatFilters.querySelectorAll('[data-filter]').forEach((node) => node.classList.remove('active'));
++          allChip.classList.add('active');
++        }
++        state.chatFilter = 'all';
++        render();
++      });
++    return;
++  }
+   state.chatFilter = button.dataset.filter;
+   render();
  };
-diff --git a/src/init.sql b/src/init.sql
-index a022f61..cce2210 100644
---- a/src/init.sql
-+++ b/src/init.sql
-@@ -1,4 +1,12 @@
-+CREATE TABLE IF NOT EXISTS user_blocks (
-+  blocker_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-+  blocked_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-+  PRIMARY KEY (blocker_id, blocked_id)
-+);
-+
- CREATE TABLE IF NOT EXISTS users (
-+
-   id TEXT PRIMARY KEY,
-   phone TEXT UNIQUE NOT NULL,
-   username TEXT,
-@@ -62,7 +70,7 @@ CREATE TABLE IF NOT EXISTS messages (
-   content TEXT DEFAULT '',
-   is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-   encryption_key_version INTEGER DEFAULT 1,
--  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system')),
-+  message_type TEXT NOT NULL DEFAULT 'text' CHECK (message_type IN ('text', 'file', 'system', 'voice')),
-   attachment_url TEXT,
-   attachment_name TEXT,
-   reply_to_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
 diff --git a/src/routes/chats.js b/src/routes/chats.js
-index 003b7bb..e58da89 100644
+index e58da89..16362f2 100644
 --- a/src/routes/chats.js
 +++ b/src/routes/chats.js
-@@ -15,7 +15,8 @@ const {
-   findOrCreateSavedChat,
-   canPostToChat,
-   formatMessage,
--  listMessages
-+  listMessages,
-+  isBlocked
- } = require('../chatService');
- const { saveUpload } = require('../storage');
- 
-@@ -1204,6 +1205,19 @@ router.post('/:chatId/read', async (req, res) => {
+@@ -1034,6 +1034,30 @@ router.post('/messages/forward-bulk', async (req, res) => {
    }
  });
  
-+router.delete('/:chatId/clear', async (req, res) => {
++// Получить одно сообщение по id. Используется в модерационной панели
++// для предварительного просмотра текста перед редактированием.
++router.get('/messages/:messageId', async (req, res) => {
 +  try {
-+    const { chatId } = req.params;
-+    const member = await isChatMember(chatId, req.user.id);
-+    if (!member) return res.status(403).json({ error: 'Вы не состоите в этом чате' });
-+    await query('DELETE FROM messages WHERE chat_id = $1 AND user_id = $2', [chatId, req.user.id]);
-+    res.json({ ok: true });
-+  } catch (error) {
-+    console.error(error);
-+    res.status(500).json({ error: 'Не удалось очистить историю' });
-+  }
-+});
++    const { messageId } = req.params;
++    const result = await query('SELECT chat_id FROM messages WHERE id = $1', [messageId]);
++    const row = result.rows[0];
++    if (!row) return res.status(404).json({ error: 'Сообщение не найдено' });
 +
- router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res) => {
-   try {
-     const { chatId } = req.params;
-@@ -1217,6 +1231,13 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
-       if (!canComment) return res.status(403).json({ error: permission.reason });
-       permission = { allowed: true, role: chatPermission.role, type: chatPermission.type };
-     }
-+
-+    if (chatPermission?.type === 'private' && !chatPermission.isSaved) {
-+      const peerId = chatPermission.peer_id;
-+      if (await isBlocked(peerId, req.user.id)) {
-+        return res.status(403).json({ error: 'Вы заблокированы этим пользователем' });
-+      }
++    // Доступ имеют: участники чата, либо суперадмин (модератор).
++    const permission = await getChatPermission(row.chat_id, req.user.id);
++    if (!permission && !req.user?.isSuperadmin) {
++      return res.status(403).json({ error: 'Нет доступа к сообщению' });
 +    }
-     
-     const files = Array.isArray(req.files) ? req.files : [];
-     if (!content && !files.length) return res.status(400).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨┐╤Г╤Б╤В╨╛╨╡' });
-@@ -1257,12 +1278,16 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
-         const attachmentName = file.originalname;
-         
-         let msgContent = i === 0 ? content : '';
-+        let msgType = 'file';
-+        if (files.length === 1 && !content && String(file.mimetype || '').startsWith('audio/')) {
-+          msgType = 'voice';
-+        }
-         
-         await query(
-           `INSERT INTO messages
-            (id, chat_id, user_id, content, is_encrypted, encryption_key_version, message_type, attachment_url, attachment_name, reply_to_message_id, album_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
--          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, 'file', attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
-+          [messageId, chatId, req.user.id, msgContent, isEncrypted, isEncrypted ? 1 : null, msgType, attachmentUrl, attachmentName, i === 0 ? replyToMessageId : null, albumId]
-         );
-         createdMessages.push(await formatMessage(messageId));
-       }
-diff --git a/src/routes/users.js b/src/routes/users.js
-index b69491d..fbc4eac 100644
---- a/src/routes/users.js
-+++ b/src/routes/users.js
-@@ -128,7 +128,51 @@ async function replaceFolders(userId, folders) {
-   }
- }
- 
-+router.post('/block', async (req, res) => {
-+  try {
-+    const userId = String(req.body.userId || '').trim();
-+    if (!userId) return res.status(400).json({ error: 'Укажите ID пользователя' });
-+    if (userId === req.user.id) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
-+    await query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.user.id, userId]);
-+    res.json({ ok: true });
++
++    const message = await formatMessage(messageId);
++    if (!message) return res.status(404).json({ error: 'Сообщение не найдено' });
++    res.json({ message });
 +  } catch (error) {
 +    console.error(error);
-+    res.status(500).json({ error: 'Не удалось заблокировать пользователя' });
++    res.status(500).json({ error: 'Не удалось получить сообщение' });
 +  }
 +});
 +
-+router.delete('/block/:userId', async (req, res) => {
-+  try {
-+    await query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
-+    res.json({ ok: true });
-+  } catch (error) {
-+    console.error(error);
-+    res.status(500).json({ error: 'Не удалось разблокировать пользователя' });
-+  }
-+});
-+
-+router.get('/blocks', async (req, res) => {
-+  try {
-+    const result = await query('SELECT blocked_id FROM user_blocks WHERE blocker_id = $1', [req.user.id]);
-+    res.json({ blockedIds: result.rows.map(row => row.blocked_id) });
-+  } catch (error) {
-+    console.error(error);
-+    res.status(500).json({ error: 'Не удалось получить список блокировок' });
-+  }
-+});
-+
-+router.get('/block-status/:userId', async (req, res) => {
-+  try {
-+    const result = await query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
-+    res.json({ blocked: result.rows.length > 0 });
-+  } catch (error) {
-+    console.error(error);
-+    res.status(500).json({ error: 'Не удалось проверить статус блокировки' });
-+  }
-+});
-+
- router.get('/public/:username', async (req, res) => {
-+
+ router.patch('/messages/:messageId', async (req, res) => {
    try {
-     const username = normalizeUsername(req.params.username);
-     const profile = await loadProfileByUsername(username, null);
+     const { messageId } = req.params;
+@@ -1046,8 +1070,11 @@ router.patch('/messages/:messageId', async (req, res) => {
+ 
+     const permission = await getChatPermission(message.chat_id, req.user.id);
+     const canModerate = canModerateMessages(permission);
+-    if (message.user_id !== req.user.id && !canModerate) {
+-      return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓ ╨┤╨╗╤П ╤А╨╡╨┤╨░╨║╤В╨╕╤А╨╛╨▓╨░╨╜╨╕╤П ╤З╤Г╨╢╨╛╨│╨╛ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П' });
++    // Суперадмин (модератор) тоже может редактировать любое сообщение,
++    // в том числе из чата, в котором не состоит — это нужно для
++    // обработки жалоб в модерационном чате.
++    if (message.user_id !== req.user.id && !canModerate && !req.user?.isSuperadmin) {
++      return res.status(403).json({ error: 'Недостаточно прав для редактирования чужого сообщения' });
+     }
+ 
+     await query('UPDATE messages SET content = $2, edited_at = NOW() WHERE id = $1', [messageId, content]);
+@@ -1066,12 +1093,15 @@ router.delete('/messages/:messageId', async (req, res) => {
+     const { messageId } = req.params;
+     const result = await query('SELECT * FROM messages WHERE id = $1', [messageId]);
+     const message = result.rows[0];
+-    if (!message) return res.status(404).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛' });
++    if (!message) return res.status(404).json({ error: 'Сообщение не найдено' });
+ 
++    // Разрешаем удалять любое сообщение любому участнику чата.
++    // Достаточно того, что пользователь состоит в этом чате.
++    // Суперадмин (модератор) может удалять сообщения из любого чата,
++    // даже если он в нём не состоит — это нужно для обработки жалоб.
+     const permission = await getChatPermission(message.chat_id, req.user.id);
+-    const canModerate = canModerateMessages(permission);
+-    if (message.user_id !== req.user.id && !canModerate) {
+-      return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓ ╨┤╨╗╤П ╤Г╨┤╨░╨╗╨╡╨╜╨╕╤П ╤З╤Г╨╢╨╛╨│╨╛ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П' });
++    if (!permission && !req.user?.isSuperadmin) {
++      return res.status(403).json({ error: 'Недостаточно прав для удаления сообщения' });
+     }
+ 
+     // ╨Ы╨╛╨│╨╕╤А╤Г╨╡╨╝ ╤Г╨┤╨░╨╗╨╡╨╜╨╕╨╡ ╨┤╨╗╤П ╨░╤Г╨┤╨╕╤В╨░ ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╜╨╛╤Б╤В╨╕
+-- 
+2.47.3
+

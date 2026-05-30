@@ -1034,6 +1034,30 @@ router.post('/messages/forward-bulk', async (req, res) => {
   }
 });
 
+// Получить одно сообщение по id. Используется в модерационной панели
+// для предварительного просмотра текста перед редактированием.
+router.get('/messages/:messageId', async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const result = await query('SELECT chat_id FROM messages WHERE id = $1', [messageId]);
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: 'Сообщение не найдено' });
+
+    // Доступ имеют: участники чата, либо суперадмин (модератор).
+    const permission = await getChatPermission(row.chat_id, req.user.id);
+    if (!permission && !req.user?.isSuperadmin) {
+      return res.status(403).json({ error: 'Нет доступа к сообщению' });
+    }
+
+    const message = await formatMessage(messageId);
+    if (!message) return res.status(404).json({ error: 'Сообщение не найдено' });
+    res.json({ message });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось получить сообщение' });
+  }
+});
+
 router.patch('/messages/:messageId', async (req, res) => {
   try {
     const { messageId } = req.params;
@@ -1046,8 +1070,11 @@ router.patch('/messages/:messageId', async (req, res) => {
 
     const permission = await getChatPermission(message.chat_id, req.user.id);
     const canModerate = canModerateMessages(permission);
-    if (message.user_id !== req.user.id && !canModerate) {
-      return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓ ╨┤╨╗╤П ╤А╨╡╨┤╨░╨║╤В╨╕╤А╨╛╨▓╨░╨╜╨╕╤П ╤З╤Г╨╢╨╛╨│╨╛ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П' });
+    // Суперадмин (модератор) тоже может редактировать любое сообщение,
+    // в том числе из чата, в котором не состоит — это нужно для
+    // обработки жалоб в модерационном чате.
+    if (message.user_id !== req.user.id && !canModerate && !req.user?.isSuperadmin) {
+      return res.status(403).json({ error: 'Недостаточно прав для редактирования чужого сообщения' });
     }
 
     await query('UPDATE messages SET content = $2, edited_at = NOW() WHERE id = $1', [messageId, content]);
@@ -1066,12 +1093,15 @@ router.delete('/messages/:messageId', async (req, res) => {
     const { messageId } = req.params;
     const result = await query('SELECT * FROM messages WHERE id = $1', [messageId]);
     const message = result.rows[0];
-    if (!message) return res.status(404).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛' });
+    if (!message) return res.status(404).json({ error: 'Сообщение не найдено' });
 
+    // Разрешаем удалять любое сообщение любому участнику чата.
+    // Достаточно того, что пользователь состоит в этом чате.
+    // Суперадмин (модератор) может удалять сообщения из любого чата,
+    // даже если он в нём не состоит — это нужно для обработки жалоб.
     const permission = await getChatPermission(message.chat_id, req.user.id);
-    const canModerate = canModerateMessages(permission);
-    if (message.user_id !== req.user.id && !canModerate) {
-      return res.status(403).json({ error: '╨Э╨╡╨┤╨╛╤Б╤В╨░╤В╨╛╤З╨╜╨╛ ╨┐╤А╨░╨▓ ╨┤╨╗╤П ╤Г╨┤╨░╨╗╨╡╨╜╨╕╤П ╤З╤Г╨╢╨╛╨│╨╛ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П' });
+    if (!permission && !req.user?.isSuperadmin) {
+      return res.status(403).json({ error: 'Недостаточно прав для удаления сообщения' });
     }
 
     // ╨Ы╨╛╨│╨╕╤А╤Г╨╡╨╝ ╤Г╨┤╨░╨╗╨╡╨╜╨╕╨╡ ╨┤╨╗╤П ╨░╤Г╨┤╨╕╤В╨░ ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╜╨╛╤Б╤В╨╕

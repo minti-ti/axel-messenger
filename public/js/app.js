@@ -1683,6 +1683,39 @@ function openMessageEditor(message) {
   );
 }
 
+// Открывает редактор сообщения для модерационной карточки.
+// Используется, когда модератор хочет изменить сообщение из жалобы,
+// при этом самого сообщения может не быть в памяти текущего чата.
+async function openModerationMessageEditor(messageId) {
+  let initialContent = '';
+  try {
+    const { message } = await api(`/api/chats/messages/${messageId}`);
+    if (message && typeof message.content === 'string') initialContent = message.content;
+  } catch (error) {
+    // Если не удалось получить — всё равно покажем пустой редактор.
+    console.warn('Cannot load reported message for moderation editor', error);
+  }
+  openModal(
+    'Редактирование сообщения (модерация)',
+    `
+      <form class="modal-grid">
+        <div class="form-card form-row">
+          <label>Текст сообщения</label>
+          <textarea name="content" rows="6">${escapeValue(initialContent)}</textarea>
+        </div>
+        <div class="muted">Сообщение будет изменено в исходном чате от лица его автора.</div>
+        <button class="primary-btn" type="submit">Сохранить</button>
+      </form>
+    `,
+    async (formData) => {
+      const content = String(formData.get('content') || '');
+      await api(`/api/chats/messages/${messageId}`, { method: 'PATCH', body: { content } });
+      closeModal();
+      showToast('Сообщение обновлено');
+    }
+  );
+}
+
 function openScheduleModal() {
   if (!state.currentChat) return;
   if (state.pendingFiles.length) {
@@ -1786,10 +1819,22 @@ function openReactionPickerForMessage(message) {
 }
 
 function openMessageContextMenu(message, x, y) {
+  // Редактировать имеет право только автор или модератор.
   const canEdit = !message.deletedAt && (message.userId === state.user.id || canModerateMessagesInCurrentChat());
+  // Удалить теперь разрешено любому участнику чата (любое сообщение).
+  const canDelete = !message.deletedAt;
   const items = [
     { label: '↩ Ответить', onClick: () => { state.replyTo = message; renderReplyBox(); el.messageInput.focus(); } },
     { label: '⇢ Переслать', onClick: () => forwardMessage(message.id).catch((error) => showToast(error.message, true)) },
+    { label: '☑ Выбрать', onClick: () => {
+        // Включаем режим множественного выбора и сразу помечаем это сообщение.
+        if (!state.selectMode) state.selectMode = true;
+        if (!state.selectedMessageIds.includes(message.id)) {
+          state.selectedMessageIds = [...state.selectedMessageIds, message.id];
+        }
+        renderSelectionBar();
+        requestRenderMessages();
+      } },
     { label: '😊 Реакции', onClick: () => openReactionPickerForMessage(message) },
     { label: '⚠ Пожаловаться', onClick: () => openReportModal({ reportedUserId: message.author.id, chatId: message.chatId, messageId: message.id }) }
   ];
@@ -1798,7 +1843,14 @@ function openMessageContextMenu(message, x, y) {
   }
   if (canPinCurrentChat()) items.push({ label: '📌 Закрепить сообщение', onClick: () => pinMessage(message.id).catch((error) => showToast(error.message, true)) });
   if (canEdit) items.push({ label: '✎ Редактировать', onClick: () => openMessageEditor(message) });
-  if (canEdit) items.push({ label: '🗑 Удалить', danger: true, onClick: async () => { if (!confirm('Удалить сообщение?')) return; await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' }); } });
+  if (canDelete) items.push({ label: '🗑 Удалить', danger: true, onClick: async () => {
+      if (!confirm('Удалить сообщение?')) return;
+      try {
+        await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    } });
   openContextMenu(items, x, y);
 }
 
@@ -1868,6 +1920,8 @@ function renderMessages() {
     const message = albumMessages ? albumMessages[0] : entry.message;
     const grouped = groupReactions(message.reactions);
     const canEdit = !message.deletedAt && (message.userId === state.user.id || canModerateMessagesInCurrentChat());
+    // Удаление разрешено всем участникам чата (для своих и чужих сообщений).
+    const canDelete = !message.deletedAt;
     const canPin = canPinCurrentChat() && !message.deletedAt;
     const selected = albumMessages
       ? albumMessages.some((item) => state.selectedMessageIds.includes(item.id))
@@ -1890,10 +1944,10 @@ function renderMessages() {
           <button class="msg-tool reply-btn" title="Ответить">↩</button>
           <button class="msg-tool react-toggle-btn" title="Реакция">😊</button>
           <button class="msg-tool forward-btn" title="Переслать">⇢</button>
-          ${state.selectMode ? '<button class="msg-tool select-btn" title="Выбрать">☑</button>' : ''}
+          <button class="msg-tool select-btn" title="Выбрать">☑</button>
           ${canPin ? '<button class="msg-tool pin-btn" title="Закрепить">📌</button>' : ''}
           ${canEdit && !albumMessages ? '<button class="msg-tool edit-btn" title="Изменить">✎</button>' : ''}
-          ${canEdit ? '<button class="msg-tool delete-btn" title="Удалить">🗑</button>' : ''}
+          ${canDelete ? '<button class="msg-tool delete-btn" title="Удалить">🗑</button>' : ''}
           <div class="reaction-picker hidden">
             ${COMMON_REACTIONS.map((emoji) => `<button type="button" class="reaction-option" data-emoji="${emoji}">${emoji}</button>`).join('')}
           </div>
@@ -1909,6 +1963,8 @@ function renderMessages() {
             <button type="button" class="secondary-btn report-quick-action" data-report-id="${message.report.id}" data-action="resolve">Решено</button>
             <button type="button" class="ghost-btn danger-btn report-quick-action" data-report-id="${message.report.id}" data-action="dismiss">Отклонить</button>
             ${message.report.reportedUserId ? `<button type=\"button\" class=\"secondary-btn report-open-profile\" data-profile-id=\"${message.report.reportedUserId}\">Профиль</button>` : ''}
+            ${message.report.messageId ? `<button type=\"button\" class=\"secondary-btn report-edit-message\" data-message-id=\"${message.report.messageId}\" data-chat-id=\"${message.report.chatId || ''}\">✎ Изменить сообщение</button>` : ''}
+            ${message.report.messageId ? `<button type=\"button\" class=\"ghost-btn danger-btn report-delete-message\" data-message-id=\"${message.report.messageId}\" data-report-id=\"${message.report.id}\">🗑 Удалить сообщение</button>` : ''}
             ${message.report.chatId && message.report.reportedUserId ? `<button type=\"button\" class=\"ghost-btn danger-btn report-quick-action\" data-report-id=\"${message.report.id}\" data-action=\"mute_60\">Мут 60м</button><button type=\"button\" class=\"ghost-btn danger-btn report-quick-action\" data-report-id=\"${message.report.id}\" data-action=\"ban_1440\">Бан 24ч</button>` : ''}
           </div>
         </div>` : ''}
@@ -1981,11 +2037,15 @@ function renderMessages() {
     if (selectBtn) {
       selectBtn.onclick = (event) => {
         event.stopPropagation();
+        // Автоматически включаем режим множественного выбора, если он ещё выключен.
+        if (!state.selectMode) state.selectMode = true;
         if (albumMessages) {
           albumMessages.forEach((item) => toggleMessageSelection(item.id));
         } else {
           toggleMessageSelection(message.id);
         }
+        renderSelectionBar();
+        requestRenderMessages();
       };
     }
 
@@ -2050,6 +2110,38 @@ function renderMessages() {
     row.querySelectorAll('.report-open-profile').forEach((button) => {
       button.onclick = () => openUserProfileModal(button.dataset.profileId).catch((error) => showToast(error.message, true));
     });
+    // Кнопка модерации "Удалить сообщение" — удаляет именно то сообщение,
+    // на которое отправлена жалоба.
+    row.querySelectorAll('.report-delete-message').forEach((button) => {
+      button.onclick = async (event) => {
+        event.stopPropagation();
+        if (!button.dataset.messageId) return;
+        if (!confirm('Удалить сообщение, на которое отправлена жалоба?')) return;
+        try {
+          await api(`/api/chats/messages/${button.dataset.messageId}`, { method: 'DELETE' });
+          // Помечаем жалобу как решённую, чтобы она не висела в списке.
+          if (button.dataset.reportId) {
+            try { await applyModerationAction(button.dataset.reportId, 'resolve'); } catch {}
+          }
+          showToast('Сообщение удалено');
+        } catch (error) {
+          showToast(error.message, true);
+        }
+      };
+    });
+    // Кнопка модерации "Изменить сообщение" — открывает модалку
+    // редактирования сообщения, на которое отправлена жалоба.
+    row.querySelectorAll('.report-edit-message').forEach((button) => {
+      button.onclick = async (event) => {
+        event.stopPropagation();
+        if (!button.dataset.messageId) return;
+        try {
+          openModerationMessageEditor(button.dataset.messageId);
+        } catch (error) {
+          showToast(error.message, true);
+        }
+      };
+    });
 
     const authorBtn = row.querySelector('[data-author-id]');
     if (authorBtn) authorBtn.onclick = () => openUserProfileModal(authorBtn.dataset.authorId).catch((error) => showToast(error.message, true));
@@ -2064,19 +2156,23 @@ function renderMessages() {
         openMessageEditor(message);
       };
     }
-    if (canEdit) {
-      row.querySelector('.delete-btn').onclick = async () => {
-        if (!confirm(albumMessages ? 'Удалить весь альбом?' : 'Удалить сообщение?')) return;
-        try {
-          if (albumMessages) {
-            for (const item of albumMessages) await api(`/api/chats/messages/${item.id}`, { method: 'DELETE' });
-          } else {
-            await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
+    if (canDelete) {
+      const deleteBtn = row.querySelector('.delete-btn');
+      if (deleteBtn) {
+        deleteBtn.onclick = async (event) => {
+          event.stopPropagation();
+          if (!confirm(albumMessages ? 'Удалить весь альбом?' : 'Удалить сообщение?')) return;
+          try {
+            if (albumMessages) {
+              for (const item of albumMessages) await api(`/api/chats/messages/${item.id}`, { method: 'DELETE' });
+            } else {
+              await api(`/api/chats/messages/${message.id}`, { method: 'DELETE' });
+            }
+          } catch (error) {
+            showToast(error.message, true);
           }
-        } catch (error) {
-          showToast(error.message, true);
-        }
-      };
+        };
+      }
     }
 
     fragment.appendChild(row);
@@ -3594,7 +3690,12 @@ el.drawerModerationBtn.onclick = () => { openModerationChat().catch((error) => s
 el.drawerSavedBtn.onclick = () => { closeDrawer(); openSavedMessages().catch((error) => showToast(error.message, true)); };
 el.drawerSearchMessagesBtn.onclick = () => { closeDrawer(); openMessageSearchModal(); };
 el.drawerFoldersBtn.onclick = () => { closeDrawer(); openFoldersModal(); };
-el.drawerFavoritesBtn.onclick = () => { state.chatFilter = 'favorite'; closeDrawer(); render(); };
+el.drawerFavoritesBtn.onclick = () => {
+  // Кнопка "Избранное" в меню тоже ведёт в чат "Избранное" (Saved Messages),
+  // а не в фильтр по избранным чатам.
+  closeDrawer();
+  openSavedMessages().catch((error) => showToast(error.message, true));
+};
 el.drawerArchiveBtn.onclick = () => { state.chatFilter = 'archive'; closeDrawer(); render(); };
 el.drawerLogoutBtn.onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
@@ -3604,6 +3705,27 @@ el.drawerLogoutBtn.onclick = async () => {
 el.chatFilters.onclick = (event) => {
   const button = event.target.closest('[data-filter]');
   if (!button) return;
+  // Специальное поведение для "Избранное" — открываем чат с самим собой
+  // (Saved Messages), а не фильтр по чатам, помеченным как избранные.
+  if (button.dataset.filter === 'saved') {
+    // Снимаем активность с других чипов и выделяем этот.
+    el.chatFilters.querySelectorAll('[data-filter]').forEach((node) => node.classList.remove('active'));
+    button.classList.add('active');
+    openSavedMessages()
+      .catch((error) => showToast(error.message, true))
+      .finally(() => {
+        // После открытия чата возвращаем фильтр списка к "Все",
+        // чтобы пользователь видел все чаты, а не только Saved.
+        const allChip = el.chatFilters.querySelector('[data-filter="all"]');
+        if (allChip) {
+          el.chatFilters.querySelectorAll('[data-filter]').forEach((node) => node.classList.remove('active'));
+          allChip.classList.add('active');
+        }
+        state.chatFilter = 'all';
+        render();
+      });
+    return;
+  }
   state.chatFilter = button.dataset.filter;
   render();
 };
