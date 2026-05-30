@@ -1549,6 +1549,7 @@ function openSettingsModal() {
           <div><strong>Уведомления браузера</strong></div>
           <div class="notification-note">Разрешение: ${'Notification' in window ? Notification.permission : 'не поддерживается'}</div>
           <div class="notification-note muted" id="pushStatusLabel">Push-уведомления (background): проверка…</div>
+          <div id="iosPushHint" class="notification-note muted hidden" style="color: #f0ad4e;"></div>
           <div class="inline-actions">
             <button id="enableNotificationsBtn" type="button" class="secondary-btn">Включить уведомления</button>
             <button id="disablePushBtn" type="button" class="secondary-btn hidden">Выключить push на этом устройстве</button>
@@ -1591,11 +1592,31 @@ function openSettingsModal() {
   // === Push: статус и переключение ===
   const pushStatusLabel = document.getElementById('pushStatusLabel');
   const disablePushBtn = document.getElementById('disablePushBtn');
+  const iosPushHint = document.getElementById('iosPushHint');
   const refreshPushStatusUI = async () => {
     if (!pushStatusLabel) return;
+
+    // iOS-специфичная подсказка
+    if (iosPushHint && typeof isIOSDevice === 'function' && isIOSDevice()) {
+      if (typeof isStandalonePWA === 'function' && !isStandalonePWA()) {
+        iosPushHint.classList.remove('hidden');
+        iosPushHint.textContent = '📱 iOS: Push-уведомления работают только из установленного приложения. ' +
+          'Нажмите «Поделиться» → «На экран Домой» в Safari, затем откройте Arena оттуда и включите уведомления.';
+      } else {
+        iosPushHint.classList.remove('hidden');
+        iosPushHint.style.color = '#4da3ff';
+        iosPushHint.textContent = '📱 iOS PWA: приложение установлено — push-уведомления поддерживаются.';
+      }
+    }
+
     const status = await getPushStatus();
     if (!status.supported) {
-      pushStatusLabel.textContent = 'Push: браузер не поддерживает PushManager.';
+      // На iOS в обычном Safari — объясняем почему
+      if (typeof isIOSDevice === 'function' && isIOSDevice() && typeof isStandalonePWA === 'function' && !isStandalonePWA()) {
+        pushStatusLabel.textContent = 'Push: ⚠️ Установите приложение на экран «Домой» для получения push-уведомлений.';
+      } else {
+        pushStatusLabel.textContent = 'Push: браузер не поддерживает PushManager.';
+      }
       if (disablePushBtn) disablePushBtn.classList.add('hidden');
       return;
     }
@@ -1620,10 +1641,11 @@ function openSettingsModal() {
         const status = await enablePushNotifications();
         const messages = {
           granted: 'Уведомления и push включены — приходить будут даже когда вкладка закрыта.',
-          denied: 'Разрешение запрещено в браузере.',
+          denied: 'Разрешение запрещено в браузере. Откройте Настройки → Safari → уведомления для этого сайта.',
           default: 'Разрешение не выдано.',
           unsupported: 'Браузер не поддерживает Push API.',
           unconfigured: 'Push не настроен на сервере (нет VAPID-ключей). Обратитесь к администратору.',
+          'ios-not-standalone': '📱 На iOS push работает только из установленного приложения. Нажмите «Поделиться» (⎋) → «На экран Домой» в Safari.',
           error: 'Не удалось подписаться. Попробуйте ещё раз.'
         };
         showToast(messages[status] || messages.error, status !== 'granted');

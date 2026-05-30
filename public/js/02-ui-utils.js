@@ -493,6 +493,28 @@ function requestBrowserNotifications() {
 }
 
 // ===================================================================
+// iOS / PWA detection helpers
+// ===================================================================
+
+/**
+ * Определяем iOS (iPhone, iPad, iPod).
+ * iPad с iOS 13+ притворяется Mac, поэтому проверяем и maxTouchPoints.
+ */
+function isIOSDevice() {
+  return /iP(hone|ad|od)/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Проверяем, запущено ли приложение в standalone-режиме (PWA).
+ * На iOS это обязательное условие для Web Push.
+ */
+function isStandalonePWA() {
+  return window.matchMedia('(display-mode: standalone)').matches ||
+    window.navigator.standalone === true;
+}
+
+// ===================================================================
 // Web Push (background-уведомления через Service Worker)
 // ===================================================================
 
@@ -500,6 +522,9 @@ function requestBrowserNotifications() {
 // при каждом обращении.
 let __swRegistrationPromise = null;
 function pushSupported() {
+  // На iOS push работает ТОЛЬКО из установленной PWA (standalone).
+  // В обычном Safari вкладке PushManager есть, но subscribe() упадёт.
+  if (isIOSDevice() && !isStandalonePWA()) return false;
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
@@ -532,9 +557,18 @@ function urlBase64ToUint8Array(base64String) {
  * Идемпотентна: если уже подписаны — переотправляем подписку на сервер
  * (это лечит ситуацию «бэкенд почистил БД, а браузер думает, что подписан»).
  *
- * Возвращает: 'granted' | 'denied' | 'unsupported' | 'unconfigured' | 'error'
+ * iOS Safari 16.4+: push работает ТОЛЬКО из PWA standalone. Кроме того,
+ * Notification.requestPermission() ОБЯЗАН вызываться из user gesture (клик).
+ * Поэтому эту функцию зовём только из onclick обработчиков.
+ *
+ * Возвращает: 'granted' | 'denied' | 'unsupported' | 'unconfigured' | 'error' | 'ios-not-standalone'
  */
 async function enablePushNotifications() {
+  // Специальная проверка для iOS: в обычном Safari push не работает
+  if (isIOSDevice() && !isStandalonePWA()) {
+    return 'ios-not-standalone';
+  }
+
   if (!pushSupported()) return 'unsupported';
 
   try {
@@ -544,6 +578,21 @@ async function enablePushNotifications() {
     // 1. Service Worker
     const reg = await ensureServiceWorker();
     if (!reg) return 'error';
+
+    // Ждём, пока SW активируется (на iOS первый install может быть медленным)
+    if (reg.installing || reg.waiting) {
+      await new Promise((resolve) => {
+        const sw = reg.installing || reg.waiting;
+        sw.addEventListener('statechange', function handler() {
+          if (sw.state === 'activated') {
+            sw.removeEventListener('statechange', handler);
+            resolve();
+          }
+        });
+        // Таймаут на случай если уже activated
+        setTimeout(resolve, 3000);
+      });
+    }
 
     // 2. Получить public VAPID-ключ с сервера. Без него — ничего не делаем.
     const keyRes = await fetch('/api/users/push/public-key');
@@ -961,6 +1010,16 @@ function shiftImageViewer(direction) {
   updateImageViewer();
 }
 
+/**
+ * Foreground-уведомление о новом сообщении.
+ *
+ * На десктопных браузерах можно использовать `new Notification()` напрямую,
+ * но на iOS Safari 16.4+ (и вообще PWA standalone) это НЕ работает —
+ * уведомления там обязаны идти через ServiceWorkerRegistration.showNotification().
+ *
+ * Поэтому используем SW showNotification если доступен, иначе fallback
+ * на обычный new Notification (для старых десктопных браузеров).
+ */
 function maybeNotifyMessage(message) {
   if (!state.settings.notificationsEnabled) return;
   if (!notificationAllowed()) return;
@@ -982,23 +1041,52 @@ function maybeNotifyMessage(message) {
   const body = message.content || message.attachmentName || 'Новое сообщение';
   const title = chat?.type === 'private' ? senderName : `${senderName} в ${chat?.title || 'чате'}`;
   
-  const notification = new Notification(title, {
-    body: body.slice(0, 100),
-    tag: `msg-${message.chatId}`,
-    requireInteraction: false,
-    badge: '💬'
-  });
-  
   if (state.settings.notifySound) {
     const audio = new Audio('data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQIAAAAAAA==');
     audio.play().catch(() => {});
   }
-  
-  notification.onclick = () => {
-    window.focus();
-    openChat(message.chatId).catch(() => {});
-    notification.close();
+
+  // Показываем уведомление через SW (обязательно для iOS PWA).
+  // Fallback на new Notification() если SW недоступен.
+  const notifOptions = {
+    body: body.slice(0, 100),
+    tag: `msg-${message.chatId}`,
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/icon-192x192.png',
+    data: { url: `/?chat=${message.chatId}`, tag: `chat:${message.chatId}` }
   };
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration('/').then((reg) => {
+      if (reg) {
+        reg.showNotification(title, notifOptions).catch(() => {
+          // Fallback: если SW.showNotification упал — пробуем обычный
+          _fallbackNotification(title, notifOptions, message.chatId);
+        });
+      } else {
+        _fallbackNotification(title, notifOptions, message.chatId);
+      }
+    }).catch(() => {
+      _fallbackNotification(title, notifOptions, message.chatId);
+    });
+  } else {
+    _fallbackNotification(title, notifOptions, message.chatId);
+  }
+}
+
+function _fallbackNotification(title, options, chatId) {
+  try {
+    const notification = new Notification(title, {
+      body: options.body,
+      tag: options.tag,
+      icon: options.icon
+    });
+    notification.onclick = () => {
+      window.focus();
+      openChat(chatId).catch(() => {});
+      notification.close();
+    };
+  } catch (_) { /* iOS will throw here — that's expected */ }
 }
 
 function canModerateMessagesInCurrentChat() {

@@ -129,7 +129,9 @@ self.addEventListener('push', (event) => {
     // tag нужен, чтобы новые сообщения из того же чата ЗАМЕНЯЛИ предыдущее
     // уведомление, а не накапливали 50 копий.
     tag: data.tag || 'axel-message',
-    renotify: Boolean(data.tag),
+    // renotify: true — при замене уведомления с тем же tag снова воспроизведётся
+    // звук/вибрация. Важно для iOS где push приходит даже если WS ещё «жив».
+    renotify: true,
     timestamp: Number(data.timestamp) || Date.now(),
     data: {
       url: data.url || '/',
@@ -137,6 +139,8 @@ self.addEventListener('push', (event) => {
     }
   };
 
+  // На iOS Safari 16.4+ showNotification обязателен для каждого push-события.
+  // Если не показать уведомление — iOS может отозвать push-подписку.
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

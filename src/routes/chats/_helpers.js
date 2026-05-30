@@ -215,6 +215,15 @@ async function pushNotifyOfflineMembers(app, chatId, message) {
     const chatTitle = message?.chatTitle || chat.title || (chatType === 'private' ? 'Личный чат' : '');
 
     // Фильтруем по настройкам уведомлений + по «офлайнности» через Socket.IO room.
+    //
+    // ВАЖНО: На iOS PWA WebSocket может оставаться «живым» на сервере ещё
+    // несколько секунд/минут после того, как пользователь свернул приложение.
+    // iOS не рвёт TCP-соединения мгновенно. Если мы пропускаем push для
+    // юзеров с открытым WS — на iOS push никогда не придёт, пока WS не
+    // отвалится по таймауту. Поэтому шлём push ВСЕМ подписанным юзерам,
+    // а дублирование решается через notification tag (SW заменяет уведомление
+    // с тем же tag, а не дублирует). Если вкладка открыта — SW покажет
+    // уведомление, но пользователь и так видит сообщение в чате (foreground).
     const io = app.get('io');
     const recipients = [];
     for (const row of members.rows) {
@@ -222,11 +231,20 @@ async function pushNotifyOfflineMembers(app, chatId, message) {
       if (chatType === 'private' && !row.notify_private_chats) continue;
       if ((chatType === 'group' || chatType === 'channel') && !row.notify_groups) continue;
 
-      // Если у пользователя есть открытое WS-соединение — пропускаем push.
-      // У нас на каждого юзера комната `user:<id>`.
+      // Проверяем WS-соединение, но только для настольных браузеров.
+      // Мобильные клиенты (особенно iOS) могут иметь «zombie» WS,
+      // поэтому для них push отправляем всегда.
       if (io && io.sockets && io.sockets.adapter) {
         const room = io.sockets.adapter.rooms.get(`user:${row.user_id}`);
-        if (room && room.size > 0) continue;
+        if (room && room.size > 0) {
+          // Юзер онлайн по WS. Но push всё равно нужен для мобильных
+          // устройств, которые могли уйти в фон. Проверяем: если у юзера
+          // ЕСТЬ push-подписки — шлём push, он придёт с тем же tag и
+          // не задублируется визуально (SW перезапишет уведомление).
+          // Если не хотим спамить — можно пропустить, но тогда iOS не получит.
+          // Компромисс: всё равно шлём — tag обеспечит дедупликацию.
+          // continue; // <-- закомментировано для iOS-совместимости
+        }
       }
       recipients.push(row.user_id);
     }

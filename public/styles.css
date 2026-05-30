@@ -1576,3 +1576,37 @@ body { overscroll-behavior: contain; }
     font-size: 17px;
   }
 }
+
+/* ========================================================================
+   iOS Safe Area Insets — отступы для notch / Dynamic Island / Home Indicator.
+   viewport-fit=cover в <meta viewport> + apple-mobile-web-app-status-bar-style
+   = black-translucent рисуют контент под системными элементами. Нужно
+   вручную задать padding, чтобы шторка/notch не перекрывали UI.
+   ======================================================================== */
+@supports (padding-top: env(safe-area-inset-top, 0px)) {
+  .sidebar-header {
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  }
+  .chat-header {
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  }
+  .drawer-profile {
+    padding-top: calc(24px + env(safe-area-inset-top, 0px));
+  }
+  .auth-screen {
+    padding-top: calc(24px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .sidebar {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .chat-panel {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+  .left-drawer {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .modal-card {
+    margin-top: env(safe-area-inset-top, 0px);
+  }
+}
