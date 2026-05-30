@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -1037,7 +1037,7 @@ router.post('/messages/delete-bulk', async (req, res) => {
       );
 
       // Soft delete
-      await query('UPDATE messages SET deleted_at = NOW(), content = '', attachment_url = NULL, attachment_name = NULL WHERE id = $1', [messageId]);
+      await query(`UPDATE messages SET deleted_at = NOW(), content = '', attachment_url = NULL, attachment_name = NULL WHERE id = $1`, [messageId]);
       await query('DELETE FROM reactions WHERE message_id = $1', [messageId]);
       
       req.app.get('io').to(message.chat_id).emit('message:deleted', { messageId, chatId: message.chat_id });
