@@ -1074,7 +1074,7 @@ function renderMarkdown(html) {
     // ~~strikethrough~~
     .replace(/~~(.+?)~~/g, '<del>$1</del>')
     // ||spoiler||
-    .replace(/\|\|(.+?)\|\|/g, '<span class="md-spoiler" onclick="this.classList.toggle('revealed')">$1</span>');
+    .replace(/\|\|(.+?)\|\|/g, '<span class="md-spoiler" onclick="this.classList.toggle(&#39;revealed&#39;)">$1</span>');
 }
 
 function maybeNotifyMessage(message) {

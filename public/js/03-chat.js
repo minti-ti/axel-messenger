@@ -639,17 +639,17 @@ async function openCommentsModal(message) {
 
 
 function renderPollWidget(container, poll) {
-  container.innerHTML = \`
-    <div class="poll-question"><strong>\${escapeHtml(poll.question)}</strong></div>
-    <div class="poll-meta muted">\${poll.isAnonymous ? 'Анонимный' : 'Открытый'} · \${poll.isMultiple ? 'Несколько ответов' : 'Один ответ'} · \${poll.totalVotes} голос(ов)\${poll.isClosed ? ' · Закрыт' : ''}</div>
-    <div class="poll-options">\${poll.options.map(o => \`
-      <button type="button" class="poll-option \${o.voted ? 'voted' : ''}" data-option-id="\${o.id}" \${poll.isClosed ? 'disabled' : ''}>
-        <div class="poll-option-bar" style="width:\${o.percentage}%"></div>
-        <span class="poll-option-text">\${escapeHtml(o.text)}</span>
-        <span class="poll-option-pct">\${o.percentage}%</span>
+  container.innerHTML = `
+    <div class="poll-question"><strong>${escapeHtml(poll.question)}</strong></div>
+    <div class="poll-meta muted">${poll.isAnonymous ? 'Анонимный' : 'Открытый'} · ${poll.isMultiple ? 'Несколько ответов' : 'Один ответ'} · ${poll.totalVotes} голос(ов)${poll.isClosed ? ' · Закрыт' : ''}</div>
+    <div class="poll-options">${poll.options.map(o => `
+      <button type="button" class="poll-option ${o.voted ? 'voted' : ''}" data-option-id="${o.id}" ${poll.isClosed ? 'disabled' : ''}>
+        <div class="poll-option-bar" style="width:${o.percentage}%"></div>
+        <span class="poll-option-text">${escapeHtml(o.text)}</span>
+        <span class="poll-option-pct">${o.percentage}%</span>
       </button>
-    \`).join('')}</div>
-  \`;
+    `).join('')}</div>
+  `;
   container.querySelectorAll('.poll-option:not([disabled])').forEach(btn => {
     btn.onclick = async () => {
       try {
@@ -674,7 +674,7 @@ function openPollModal() {
   if (!state.currentChat) return;
   openModal(
     'Создать опрос',
-    \`
+    `
       <form class="modal-grid">
         <div class="form-card form-row">
           <label>Вопрос</label>
@@ -697,7 +697,7 @@ function openPollModal() {
         </div>
         <button class="primary-btn" type="submit">Создать опрос</button>
       </form>
-    \`,
+    `,
     async (formData) => {
       const options = [];
       for (let i = 0; i < 10; i++) {
