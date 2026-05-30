@@ -258,16 +258,17 @@ async function bootstrap() {
     await refreshChats({ showSkeleton: true });
     connectSocket();
     await handleInitialRoute();
-    // Регистрируем Service Worker в фоне. Если у пользователя уже выдано
-    // разрешение — он автоматически переподпишется (внутри enablePushNotifications
-    // PushManager.subscribe идемпотентен по applicationServerKey). Если нет —
-    // SW зарегистрирован, ждёт нажатия кнопки в настройках.
+    // Регистрируем Service Worker — нужен для PWA cache, offline и push.
+    // ensureServiceWorker() теперь не зависит от pushSupported() — SW
+    // регистрируется всегда, включая iOS Safari (не standalone).
     if (typeof ensureServiceWorker === 'function') {
-      ensureServiceWorker().then(() => {
+      ensureServiceWorker().then((reg) => {
+        if (!reg) return;
+        // Если push поддерживается и permission уже granted — переподписываемся
+        // на случай если подписка была отозвана push-сервисом.
         if (typeof getPushStatus === 'function') {
           getPushStatus().then((s) => {
             if (s.supported && s.permission === 'granted' && !s.subscribed) {
-              // Подписка была отозвана push-сервисом — тихо переподписываемся.
               enablePushNotifications().catch(() => {});
             }
           }).catch(() => {});

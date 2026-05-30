@@ -1579,9 +1579,10 @@ body { overscroll-behavior: contain; }
 
 /* ========================================================================
    iOS Safe Area Insets — отступы для notch / Dynamic Island / Home Indicator.
-   viewport-fit=cover в <meta viewport> + apple-mobile-web-app-status-bar-style
-   = black-translucent рисуют контент под системными элементами. Нужно
-   вручную задать padding, чтобы шторка/notch не перекрывали UI.
+   viewport-fit=cover + apple-mobile-web-app-status-bar-style=black-translucent
+   рисуют контент под системными элементами. Компенсируем padding'ами.
+   Селекторы с body.mobile-mode нужны, чтобы побить specificity мобильных
+   @media-правил (body.mobile-mode .chat-header { padding: 12px 14px }).
    ======================================================================== */
 @supports (padding-top: env(safe-area-inset-top, 0px)) {
   .sidebar-header {
@@ -1597,6 +1598,14 @@ body { overscroll-behavior: contain; }
     padding-top: calc(24px + env(safe-area-inset-top, 0px));
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   }
+  /* Мобильный режим — !important чтобы побить body.mobile-mode .xxx { padding: ... } */
+  body.mobile-mode .sidebar-header {
+    padding-top: calc(12px + env(safe-area-inset-top, 0px)) !important;
+  }
+  body.mobile-mode .chat-header {
+    padding-top: calc(12px + env(safe-area-inset-top, 0px)) !important;
+  }
+  /* Боковые insets для landscape iPhone */
   .sidebar {
     padding-left: env(safe-area-inset-left, 0px);
   }

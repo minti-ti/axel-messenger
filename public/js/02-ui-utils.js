@@ -529,7 +529,9 @@ function pushSupported() {
 }
 
 async function ensureServiceWorker() {
-  if (!pushSupported()) return null;
+  // SW регистрируется ВСЕГДА (не только для push) — он нужен для PWA cache,
+  // offline fallback и foreground-уведомлений через showNotification.
+  if (!('serviceWorker' in navigator)) return null;
   if (!__swRegistrationPromise) {
     __swRegistrationPromise = navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .catch((error) => {

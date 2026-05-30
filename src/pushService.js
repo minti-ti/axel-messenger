@@ -181,10 +181,19 @@ async function sendPushToUser(userId, payload) {
       keys: { p256dh: row.p256dh, auth: row.auth }
     };
     try {
-      await webpush.sendNotification(subscription, safePayload, {
+      // Для iOS Safari push через APNs (endpoint *.push.apple.com)
+      // нужны дополнительные headers для надёжной доставки.
+      const pushOptions = {
         TTL: 60 * 60 * 24, // сутки — push-сервис может буферизировать
         urgency: 'high'
-      });
+      };
+      if (row.endpoint && row.endpoint.includes('.push.apple.com')) {
+        pushOptions.headers = {
+          'apns-push-type': 'alert',
+          'apns-priority': '10'  // 10 = немедленная доставка
+        };
+      }
+      await webpush.sendNotification(subscription, safePayload, pushOptions);
       stats.sent += 1;
       // last_used_at обновим лениво, чтобы не плодить N UPDATE на каждый push.
       // Достаточно вызывать раз в N часов либо при ошибке.
