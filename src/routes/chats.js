@@ -250,9 +250,9 @@ async function checkJoinRestriction(chatId, userId) {
 
 function classifyAttachment(name = '') {
   const value = String(name || '').toLowerCase();
-  if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(value)) return 'photo';
-  if (/\.(mp3|ogg|wav|m4a|webm|aac)$/i.test(value)) return 'audio';
-  if (/\.(mp4|mov|avi|mkv|webm)$/i.test(value)) return 'video';
+  if (/\.(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i.test(value)) return 'photo';
+  if (/\.(mp3|ogg|wav|m4a|webm|aac|opus|flac)$/i.test(value)) return 'audio';
+  if (/\.(mp4|mov|avi|mkv|webm|m4v|3gp)$/i.test(value)) return 'video';
   return 'file';
 }
 

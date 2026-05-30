@@ -43,11 +43,21 @@ function resolveDatabaseUrl() {
   return `postgresql://${user}:${password}@${host}:${port}/${name}`;
 }
 
+// Список разрешённых origin'ов: основной APP_URL + опциональный APP_URLS
+// (через запятую) — удобно для preview-деплоев Render и кастомных доменов.
+const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const APP_URLS = String(process.env.APP_URLS || '')
+  .split(',')
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+const ALL_APP_URLS = Array.from(new Set([APP_URL.replace(/\/+$/, ''), ...APP_URLS]));
+
 module.exports = {
   port: Number(process.env.PORT || 3000),
   nodeEnv: NODE_ENV,
   isProduction: IS_PRODUCTION,
-  appUrl: process.env.APP_URL || 'http://localhost:3000',
+  appUrl: APP_URL,
+  appUrls: ALL_APP_URLS,
   jwtSecret: JWT_SECRET,
   allowDevCodeResponse: IS_PRODUCTION
     ? false

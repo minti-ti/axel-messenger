@@ -1,11 +1,64 @@
 const https = require('https');
+const crypto = require('crypto');
 const config = require('./config');
 const { registerTelegramUser } = require('./sms');
 
 const botStates = new Map();
 
+// Секрет для проверки подлинности webhook. Если задан TELEGRAM_WEBHOOK_SECRET —
+// используем его, иначе детерминированно деривируем из JWT_SECRET, чтобы
+// значение не менялось между перезапусками одного и того же деплоя.
+function getWebhookSecret() {
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+    return String(process.env.TELEGRAM_WEBHOOK_SECRET);
+  }
+  return crypto
+    .createHmac('sha256', config.jwtSecret)
+    .update('telegram-webhook-secret-v1')
+    .digest('hex')
+    .slice(0, 48); // 48 hex chars, безопасно по требованиям Telegram (1..256, A-Za-z0-9_-)
+}
+
+// Telegram присылает заголовок X-Telegram-Bot-Api-Secret-Token со значением,
+// которое мы передали при setWebhook. Если он не совпадает — запрос
+// поддельный (любой внешний актор мог постнуть JSON на /telegram/webhook).
+function isAuthenticTelegramRequest(req) {
+  const expected = getWebhookSecret();
+  const got = req.headers['x-telegram-bot-api-secret-token'];
+  if (!got || typeof got !== 'string') return false;
+  try {
+    const a = Buffer.from(expected, 'utf8');
+    const b = Buffer.from(got, 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// Экранирование HTML-спецсимволов — нужно для parse_mode=HTML, иначе
+// произвольный текст пользователя может ломать разметку или
+// приводить к 400 Bad Request от Telegram.
+function escapeHtml(text) {
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function handleTelegramWebhook(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method not allowed');
+
+  // Защита от спуфинга: без валидного секрета — никаких действий.
+  // Иначе любой может постнуть {"message": {"contact": {"phone_number": ...}}}
+  // и привязать чужой Telegram chat_id к телефону жертвы, перехватив коды входа.
+  if (!isAuthenticTelegramRequest(req)) {
+    if (!config.isProduction) {
+      console.warn('[Telegram Bot] webhook rejected: invalid or missing secret token');
+    }
+    return res.status(401).json({ ok: false });
+  }
 
   // Минимальное логирование без PII (телефонов / chat_id пользователей).
   if (!config.isProduction) {
@@ -25,6 +78,16 @@ async function handleTelegramWebhook(req, res) {
 
   try {
     if (message.contact) {
+      // ВАЖНО: принимаем номер только если контакт принадлежит самому отправителю,
+      // а не «перенаправлен» из чужой карточки. Это закрывает попытку привязать
+      // чужой номер к своему chat_id (или наоборот).
+      const senderId = message.from?.id;
+      const contactUserId = message.contact.user_id;
+      if (contactUserId && senderId && contactUserId !== senderId) {
+        sendMessage(chatId, 'Можно привязать только свой собственный номер телефона.');
+        return res.json({ ok: true });
+      }
+
       const phone = message.contact.phone_number;
       if (phone) {
         await registerTelegramUser(phone, chatId);
@@ -40,12 +103,15 @@ async function handleTelegramWebhook(req, res) {
       botStates.set(chatId, 'awaiting_contact');
       sendContactRequest(chatId);
     } else if (text.startsWith('/help')) {
-      sendMessage(chatId, '🤖 **Arena Messenger Bot**\n\n🔗 Привязка номера телефона\nОтправь `/start` чтобы привязать номер через встроенную кнопку.');
+      sendMessage(
+        chatId,
+        '🤖 <b>Axel Messenger Bot</b>\n\n🔗 Привязка номера телефона\nОтправь /start чтобы привязать номер через встроенную кнопку.'
+      );
     } else if (text.startsWith('/cancel')) {
       botStates.delete(chatId);
       sendMessage(chatId, '❌ Операция отменена.');
     } else {
-      sendMessage(chatId, '👋 Привет! Отправь `/start` чтобы привязать номер телефона.');
+      sendMessage(chatId, '👋 Привет! Отправь /start чтобы привязать номер телефона.');
     }
     res.json({ ok: true });
   } catch (error) {
@@ -96,14 +162,17 @@ function sendContactRequest(chatId) {
   req.end();
 }
 
-function sendMessage(chatId, text) {
+// Шлём всё через parse_mode=HTML с экранированием — это безопаснее, чем
+// Markdown (одиночный _ или * в тексте пользователя ломает разметку и
+// возвращает 400 от Telegram).
+function sendMessage(chatId, htmlText) {
   const { botToken } = config.telegram;
   if (!botToken) return;
 
   const data = JSON.stringify({
     chat_id: chatId,
-    text: text,
-    parse_mode: 'Markdown',
+    text: String(htmlText || ''),
+    parse_mode: 'HTML',
     reply_markup: { remove_keyboard: true }
   });
 
@@ -133,7 +202,10 @@ function setupWebhook() {
 
   const data = JSON.stringify({
     url: webhookUrl,
-    allowed_updates: ['message', 'contact']
+    allowed_updates: ['message', 'contact'],
+    // Telegram будет присылать этот токен в заголовке
+    // X-Telegram-Bot-Api-Secret-Token каждого вебхук-запроса.
+    secret_token: getWebhookSecret()
   });
 
   const options = {
@@ -151,4 +223,4 @@ function setupWebhook() {
   req.end();
 }
 
-module.exports = { handleTelegramWebhook, setupWebhook };
+module.exports = { handleTelegramWebhook, setupWebhook, escapeHtml, getWebhookSecret };

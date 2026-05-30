@@ -4,3 +4,18 @@ uploads/
 *.patch
 axel-messenger.patch
 changes.patch
+
+# Резервные копии и временные файлы, которые иногда оставляют редакторы/скрипты
+*.backup
+*.bak
+*.orig
+*.rej
+*.swp
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Логи и покрытие тестов
+*.log
+coverage/
+.nyc_output/

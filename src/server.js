@@ -21,11 +21,13 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 const server = http.createServer(app);
 
-// CORS для Socket.IO. В production пускаем только наш фронтенд (config.appUrl),
-// в dev — разрешаем localhost/любой origin для удобства.
+// CORS для Socket.IO. В production пускаем только перечисленные домены
+// (config.appUrls — основной APP_URL + список из APP_URLS через запятую,
+// удобно для preview-деплоев Render и кастомных доменов).
+// В dev — разрешаем любой origin для удобства локальной разработки.
 const socketCorsOrigin = config.isProduction
-  ? [config.appUrl]
-  : true; // в dev — отражаем Origin запроса
+  ? config.appUrls
+  : true;
 
 const io = new Server(server, {
   cors: {
@@ -98,7 +100,9 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
   if (config.isProduction) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // 2 года + includeSubDomains + preload — рекомендованные значения
+    // для регистрации на hstspreload.org.
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   }
   next();
 });
@@ -307,23 +311,42 @@ async function emitChatRefresh(chatId) {
 }
 
 async function processScheduledMessages() {
-  const due = await query(
-    `SELECT * FROM scheduled_messages
-     WHERE sent_at IS NULL AND scheduled_for <= NOW()
-     ORDER BY scheduled_for ASC
-     LIMIT 20`
+  // ВАЖНО: атомарно «забираем» партию сообщений за этим инстансом.
+  // Без этого при scale-out (несколько Web-инстансов на Render) оба воркера
+  // прочитали бы одни и те же строки и отправили бы сообщение дважды.
+  // UPDATE ... RETURNING выполняется внутри одной транзакции и берёт
+  // ROW EXCLUSIVE lock на затронутые строки.
+  const claimed = await query(
+    `UPDATE scheduled_messages
+       SET sent_at = NOW()
+     WHERE id IN (
+       SELECT id FROM scheduled_messages
+       WHERE sent_at IS NULL AND scheduled_for <= NOW()
+       ORDER BY scheduled_for ASC
+       LIMIT 20
+       FOR UPDATE SKIP LOCKED
+     )
+     RETURNING id, chat_id, user_id, content, reply_to_message_id, attachment_url, attachment_name`
   );
-  for (const item of due.rows) {
+
+  for (const item of claimed.rows) {
     const messageId = item.id;
-    await query(
-      `INSERT INTO messages (id, chat_id, user_id, content, message_type, reply_to_message_id, attachment_url, attachment_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [messageId, item.chat_id, item.user_id, item.content, item.attachment_url ? 'file' : 'text', item.reply_to_message_id, item.attachment_url, item.attachment_name]
-    );
-    await query('UPDATE scheduled_messages SET sent_at = NOW() WHERE id = $1', [item.id]);
-    const formatted = await formatMessage(messageId);
-    io.to(item.chat_id).emit('message:new', formatted);
-    await emitChatRefresh(item.chat_id);
+    try {
+      await query(
+        `INSERT INTO messages (id, chat_id, user_id, content, message_type, reply_to_message_id, attachment_url, attachment_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO NOTHING`,
+        [messageId, item.chat_id, item.user_id, item.content, item.attachment_url ? 'file' : 'text', item.reply_to_message_id, item.attachment_url, item.attachment_name]
+      );
+      const formatted = await formatMessage(messageId);
+      io.to(item.chat_id).emit('message:new', formatted);
+      await emitChatRefresh(item.chat_id);
+    } catch (error) {
+      // Если вставка упала — откатываем «выдачу», чтобы повторить позже.
+      // Иначе сообщение будет считаться отправленным, а его нет.
+      console.error('[scheduled] dispatch failed for', messageId, error.message);
+      await query('UPDATE scheduled_messages SET sent_at = NULL WHERE id = $1', [messageId]).catch(() => {});
+    }
   }
 }
 

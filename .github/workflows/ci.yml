@@ -28,7 +28,20 @@ jobs:
         run: |
           find src -name '*.js' -print0 | xargs -0 -n1 node --check
 
+      # Юнит-тесты на встроенном node:test — без внешних зависимостей.
+      # JWT_SECRET нужен, потому что config.js требует его в production-режиме;
+      # здесь NODE_ENV=test, но дадим всё равно валидное значение на всякий случай.
+      - name: Unit tests
+        env:
+          NODE_ENV: test
+          JWT_SECRET: ci_test_secret_only_not_used_in_production_xxxxxxxxxxxx
+        run: npm test
+
       # Аудит зависимостей. Падаем только на high/critical, чтобы шум moderate
       # из транзитивных пакетов не блокировал пайплайн.
       - name: npm audit (high+critical)
         run: npm audit --audit-level=high
+
+      # Smoke-build Docker-образа — ловим гнилой Dockerfile до прода.
+      - name: Build Docker image
+        run: docker build -t axel-messenger:ci .

@@ -14,17 +14,28 @@ const needsSsl =
   );
 
 // По умолчанию у managed-Postgres (Neon/Supabase/RDS) валидные публичные
-// сертификаты, но узлы ротируются и встроенный CA-bundle не всегда успевает,
-// поэтому проверка цепочки отключена. Это оставляет теоретический MITM.
-// Чтобы включить строгую проверку — задайте DB_SSL_STRICT=true и (по желанию)
-// положите CA-сертификат провайдера в DB_SSL_CA (PEM-строка).
-const sslStrict = String(process.env.DB_SSL_STRICT || 'false') === 'true';
+// сертификаты. С версии Node 20+ встроенный CA-bundle (Mozilla) их валидирует
+// нормально, поэтому строгую проверку держим включённой по умолчанию —
+// иначе остаётся теоретический MITM между приложением и БД.
+//
+// Если ваш провайдер использует свой CA (например, on-prem Postgres,
+// self-signed сертификат), задайте DB_SSL_CA = PEM-строка с CA-сертификатом.
+// Только в крайнем случае (диагностика, миграция) можно явно ослабить:
+// DB_SSL_STRICT=false.
+const sslStrict = String(process.env.DB_SSL_STRICT || 'true') !== 'false';
 const sslConfig = needsSsl
   ? {
       rejectUnauthorized: sslStrict,
-      ...(process.env.DB_SSL_CA ? { ca: process.env.DB_SSL_CA } : {})
+      ...(process.env.DB_SSL_CA ? { ca: process.env.DB_SSL_CA.replace(/\\n/g, '\n') } : {})
     }
   : false;
+
+if (config.isProduction && needsSsl && !sslStrict) {
+  console.warn(
+    '[db] WARNING: DB_SSL_STRICT=false in production — connection is vulnerable to MITM. ' +
+    'Remove DB_SSL_STRICT or set it to true.'
+  );
+}
 
 const pool = new Pool({
   connectionString: config.databaseUrl,
