@@ -42,6 +42,11 @@ const EXPECTED_ROUTES = [
   'DELETE /messages/:messageId',
   'POST /messages/:messageId/reactions',
   'POST /messages/:messageId/forward',
+  // Polls
+  'POST /:chatId/polls',
+  'POST /polls/:pollId/vote',
+  'GET /polls/:pollId',
+  'POST /polls/:pollId/close',
   // Параметризованные с :chatId (из messages.js)
   'POST /:chatId/pin/:messageId',
   'DELETE /:chatId/pin',

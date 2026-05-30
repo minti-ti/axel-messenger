@@ -77,4 +77,42 @@ router.get('/chats/:username', async (req, res) => {
   }
 });
 
+
+// GET /api/public/link-preview?url=... — OG meta для превью ссылок
+router.get('/link-preview', async (req, res) => {
+  try {
+    const url = String(req.query.url || '').trim();
+    if (!url || !url.startsWith('http')) return res.status(400).json({ error: 'URL обязателен' });
+
+    // Простой fetch с таймаутом
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'ArenaMessenger/1.0 LinkPreview' }
+    });
+    clearTimeout(timeout);
+
+    if (!response.ok) return res.json({ title: null });
+    const html = await response.text();
+
+    // Парсим OG-теги
+    const getOg = (prop) => {
+      const match = html.match(new RegExp('<meta[^>]*property=["\'"]og:' + prop + '["\'"\s][^>]*content=["\'"]([^"\']*)["\'"]', 'i'))
+        || html.match(new RegExp('<meta[^>]*content=["\'"]([^"\']*)["\'"][^>]*property=["\'"]og:' + prop + '["\'"\s]', 'i'));
+      return match ? match[1] : null;
+    };
+    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+
+    res.json({
+      title: getOg('title') || (titleMatch ? titleMatch[1].trim() : null),
+      description: getOg('description') || null,
+      image: getOg('image') || null,
+      siteName: getOg('site_name') || null
+    });
+  } catch (error) {
+    res.json({ title: null });
+  }
+});
+
 module.exports = router;

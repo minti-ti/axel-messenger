@@ -59,4 +59,7 @@ router.use(membersRouter);
 router.use(invitesRouter);
 router.use(coreRouter);
 
+// Опросы (polls)
+router.use('/', require('./chats/polls'));
+
 module.exports = router;

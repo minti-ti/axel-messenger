@@ -637,10 +637,86 @@ async function openCommentsModal(message) {
   };
 }
 
+
+function renderPollWidget(container, poll) {
+  container.innerHTML = \`
+    <div class="poll-question"><strong>\${escapeHtml(poll.question)}</strong></div>
+    <div class="poll-meta muted">\${poll.isAnonymous ? 'Анонимный' : 'Открытый'} · \${poll.isMultiple ? 'Несколько ответов' : 'Один ответ'} · \${poll.totalVotes} голос(ов)\${poll.isClosed ? ' · Закрыт' : ''}</div>
+    <div class="poll-options">\${poll.options.map(o => \`
+      <button type="button" class="poll-option \${o.voted ? 'voted' : ''}" data-option-id="\${o.id}" \${poll.isClosed ? 'disabled' : ''}>
+        <div class="poll-option-bar" style="width:\${o.percentage}%"></div>
+        <span class="poll-option-text">\${escapeHtml(o.text)}</span>
+        <span class="poll-option-pct">\${o.percentage}%</span>
+      </button>
+    \`).join('')}</div>
+  \`;
+  container.querySelectorAll('.poll-option:not([disabled])').forEach(btn => {
+    btn.onclick = async () => {
+      try {
+        const { poll: updated } = await api('/api/chats/polls/' + poll.id + '/vote', {
+          method: 'POST',
+          body: { optionId: btn.dataset.optionId }
+        });
+        renderPollWidget(container, updated);
+      } catch (e) { showToast(e.message, true); }
+    };
+  });
+}
+
 function openSendContextMenu(x, y) {
   openContextMenu([
-    { label: '⏰ Отправить позже', onClick: () => openScheduleModal() }
+    { label: '⏰ Отправить позже', onClick: () => openScheduleModal() },
+    { label: '📊 Создать опрос', onClick: () => openPollModal() }
   ], x, y);
+}
+
+function openPollModal() {
+  if (!state.currentChat) return;
+  openModal(
+    'Создать опрос',
+    \`
+      <form class="modal-grid">
+        <div class="form-card form-row">
+          <label>Вопрос</label>
+          <input name="question" placeholder="Что спросить?" required maxlength="300" />
+        </div>
+        <div class="form-card form-row" id="pollOptionsContainer">
+          <label>Варианты ответов</label>
+          <input name="option_0" placeholder="Вариант 1" required />
+          <input name="option_1" placeholder="Вариант 2" required />
+          <input name="option_2" placeholder="Вариант 3 (опц.)" style="margin-top:6px" />
+          <input name="option_3" placeholder="Вариант 4 (опц.)" style="margin-top:6px" />
+        </div>
+        <div class="settings-option">
+          <div>Анонимное голосование</div>
+          <input class="switch" type="checkbox" name="isAnonymous" checked />
+        </div>
+        <div class="settings-option">
+          <div>Несколько ответов</div>
+          <input class="switch" type="checkbox" name="isMultiple" />
+        </div>
+        <button class="primary-btn" type="submit">Создать опрос</button>
+      </form>
+    \`,
+    async (formData) => {
+      const options = [];
+      for (let i = 0; i < 10; i++) {
+        const val = String(formData.get('option_' + i) || '').trim();
+        if (val) options.push(val);
+      }
+      await api('/api/chats/' + state.currentChat.id + '/polls', {
+        method: 'POST',
+        body: {
+          question: formData.get('question'),
+          options,
+          isAnonymous: formData.get('isAnonymous') === 'on',
+          isMultiple: formData.get('isMultiple') === 'on'
+        }
+      });
+      closeModal();
+      showToast('Опрос создан');
+    }
+  );
 }
 
 function openReactionPickerForMessage(message) {
@@ -812,7 +888,7 @@ function renderMessages() {
         </div>` : ''}
         ${message.forwardedFrom ? `<button type="button" class="reply-preview user-link forwarded-link" data-forward-user-id="${message.forwardedFrom.userId}"><strong>Переслано от ${escapeHtml(userLabel(message.forwardedFrom))}</strong>${message.forwardedFrom.username ? `<br />@${escapeHtml(message.forwardedFrom.username)}` : ''}</button>` : ''}
         ${message.replyPreview ? `<button type="button" class="reply-preview jump-reply" data-reply-id="${message.replyToMessageId}"><strong>${escapeHtml(message.replyPreview.authorName)}</strong><br />${escapeHtml(message.replyPreview.content || message.replyPreview.attachmentName || 'Вложение')}</button>` : ''}
-        <div class="message-content ${isStickerContent(message.content) ? 'sticker-message' : ''}">${isStickerContent(message.content) ? escapeHtml(normalizeStickerDisplay(message.content)) : (typeof renderMarkdown === 'function' ? renderMarkdown(escapeHtml(message.content || '')) : escapeHtml(message.content || ''))}</div>
+        <div class="message-content ${isStickerContent(message.content) ? 'sticker-message' : ''}">${isStickerContent(message.content) ? escapeHtml(normalizeStickerDisplay(message.content)) : (typeof renderMarkdown === 'function' ? (typeof autoLinkUrls === 'function' ? autoLinkUrls(renderMarkdown(escapeHtml(message.content || ''))) : renderMarkdown(escapeHtml(message.content || ''))) : escapeHtml(message.content || ''))}</div>
         ${albumMessages ? albumGrid : attachmentMarkup(message)}
         ${state.currentChat.type === 'channel' && state.currentChat.restrictions?.commentsEnabled && !message.replyToMessageId ? `<button type="button" class="comments-link" data-comments-for="${message.id}">💬 Комментарии ${message.commentsCount ? `(${message.commentsCount})` : ''}</button>` : ''}
         <div class="reactions">${grouped.map((item) => `<button type="button" class="reaction-chip ${item.mine ? 'mine' : ''}" data-emoji="${item.emoji}">${item.emoji} ${item.count}</button>`).join('')}</div>
@@ -1030,6 +1106,19 @@ function renderMessages() {
 
   mountWaveforms(el.messageList);
   hydrateProtectedMedia(el.messageList);
+  if (typeof hydrateLinkPreviews === 'function') hydrateLinkPreviews(el.messageList);
+  // Загрузка опросов
+  el.messageList.querySelectorAll('.poll-widget[data-poll-message-id]').forEach(async (widget) => {
+    if (widget.dataset.loaded === '1') return;
+    widget.dataset.loaded = '1';
+    try {
+      // Ищем poll по message_id
+      const msgId = widget.dataset.pollMessageId;
+      const { poll } = await api('/api/chats/polls/' + msgId).catch(() => ({ poll: null }));
+      if (!poll) { widget.innerHTML = '<div class="muted">Опрос не найден</div>'; return; }
+      renderPollWidget(widget, poll);
+    } catch (_) { widget.innerHTML = '<div class="muted">Ошибка загрузки опроса</div>'; }
+  });
   
   if (shouldScroll) {
     el.messageList.scrollTop = el.messageList.scrollHeight;

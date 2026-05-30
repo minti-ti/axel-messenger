@@ -72,7 +72,10 @@ async function initDb() {
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_display_name_length') THEN ALTER TABLE users ADD CONSTRAINT chk_users_display_name_length CHECK (length(display_name) <= 120); END IF; END $$",
     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_bio_length') THEN ALTER TABLE users ADD CONSTRAINT chk_users_bio_length CHECK (length(bio) <= 1000); END IF; END $$",
     "CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages (chat_id, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id)"
+    "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id)",
+    "CREATE TABLE IF NOT EXISTS polls (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, creator_id TEXT NOT NULL, message_id TEXT, question TEXT NOT NULL, is_anonymous BOOLEAN DEFAULT TRUE, is_multiple BOOLEAN DEFAULT FALSE, is_closed BOOLEAN DEFAULT FALSE, created_at TIMESTAMPTZ DEFAULT NOW())",
+    "CREATE TABLE IF NOT EXISTS poll_options (id TEXT PRIMARY KEY, poll_id TEXT NOT NULL, option_text TEXT NOT NULL, position INT DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS poll_votes (id TEXT PRIMARY KEY, poll_id TEXT NOT NULL, option_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE(poll_id, option_id, user_id))"
   ];
   for (const migration of migrations) {
     try { await pool.query(migration); } catch (_) { /* column already exists */ }

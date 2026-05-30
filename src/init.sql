@@ -293,3 +293,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint
 
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id
   ON push_subscriptions(user_id);
+
+-- Опросы (polls)
+CREATE TABLE IF NOT EXISTS polls (
+  id TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+  creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  question TEXT NOT NULL,
+  is_anonymous BOOLEAN NOT NULL DEFAULT TRUE,
+  is_multiple BOOLEAN NOT NULL DEFAULT FALSE,
+  is_closed BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS poll_options (
+  id TEXT PRIMARY KEY,
+  poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  option_text TEXT NOT NULL,
+  position INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS poll_votes (
+  id TEXT PRIMARY KEY,
+  poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+  option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (poll_id, option_id, user_id)
+);

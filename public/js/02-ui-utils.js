@@ -1321,3 +1321,40 @@ function shouldIgnoreMessageContextTarget(target) {
   return Boolean(target.closest('button, a, audio, video, canvas, input, textarea, select'));
 }
 
+
+
+/**
+ * Превращает URL в кликабельные ссылки (после escapeHtml + renderMarkdown).
+ */
+function autoLinkUrls(html) {
+  if (!html) return html;
+  // Не линкуем URL внутри тегов (href, src и т.д.)
+  return html.replace(/(^|[^"'>])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" class="msg-link" target="_blank" rel="noopener">$2</a>');
+}
+/**
+ * Загружает OG-превью для ссылок в сообщениях.
+ */
+function hydrateLinkPreviews(root) {
+  root.querySelectorAll('.msg-link:not([data-preview-loaded])').forEach(function(link) {
+    link.dataset.previewLoaded = '1';
+    var url = link.getAttribute('href');
+    if (!url || !url.startsWith('http')) return;
+    fetch('/api/public/link-preview?url=' + encodeURIComponent(url))
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || !data.title) return;
+        var preview = document.createElement('div');
+        preview.className = 'link-preview';
+        preview.innerHTML = (data.image ? '<img class="link-preview-img" src="' + escapeHtml(data.image) + '" alt="" />' : '') +
+          '<div class="link-preview-text">' +
+          '<div class="link-preview-title">' + escapeHtml(data.title) + '</div>' +
+          (data.description ? '<div class="link-preview-desc">' + escapeHtml(data.description.slice(0, 150)) + '</div>' : '') +
+          '<div class="link-preview-url muted">' + escapeHtml(url.split('/')[2] || '') + '</div>' +
+          '</div>';
+        preview.style.cursor = 'pointer';
+        preview.onclick = function() { window.open(url, '_blank'); };
+        link.parentElement.appendChild(preview);
+      })
+      .catch(function() {});
+  });
+}

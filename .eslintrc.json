@@ -1,0 +1,22 @@
+{
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "parserOptions": {
+    "ecmaVersion": 2022
+  },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "no-undef": "error",
+    "no-constant-condition": "warn",
+    "no-duplicate-case": "error",
+    "no-empty": "warn",
+    "no-extra-semi": "warn",
+    "no-unreachable": "error",
+    "eqeqeq": ["warn", "smart"],
+    "no-var": "warn",
+    "prefer-const": "warn"
+  },
+  "ignorePatterns": ["public/", "node_modules/", "coverage/"]
+}
