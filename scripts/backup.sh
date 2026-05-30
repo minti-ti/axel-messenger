@@ -12,7 +12,7 @@ if [ -d "$ROOT_DIR/uploads" ]; then
 fi
 
 if command -v docker >/dev/null 2>&1; then
-  docker exec arena-messenger-postgres pg_dump -U messenger messenger > "$BACKUP_DIR/db-$TIMESTAMP.sql"
+  docker exec axel-messenger-postgres pg_dump -U messenger messenger > "$BACKUP_DIR/db-$TIMESTAMP.sql"
 fi
 
 echo "Backup created in $BACKUP_DIR"

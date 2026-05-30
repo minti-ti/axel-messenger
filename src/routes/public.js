@@ -89,7 +89,7 @@ router.get('/link-preview', async (req, res) => {
     const timeout = setTimeout(() => controller.abort(), 5000);
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'ArenaMessenger/1.0 LinkPreview' }
+      headers: { 'User-Agent': 'AxelMessenger/1.0 LinkPreview' }
     });
     clearTimeout(timeout);
 

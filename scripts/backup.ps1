@@ -13,6 +13,6 @@ if (Test-Path $UploadsPath) {
 }
 
 $dbPath = Join-Path $BackupDir "db-$Timestamp.sql"
-& docker exec arena-messenger-postgres pg_dump -U messenger messenger | Out-File -Encoding utf8 $dbPath
+& docker exec axel-messenger-postgres pg_dump -U messenger messenger | Out-File -Encoding utf8 $dbPath
 
 Write-Host "Backup created in $BackupDir"

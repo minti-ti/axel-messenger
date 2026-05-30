@@ -974,7 +974,7 @@ async function exportData() {
   const response = await fetch('/api/users/me/export', { headers: { Authorization: `Bearer ${state.token}` } });
   const text = await response.text();
   if (!response.ok) throw new Error('Не удалось экспортировать данные');
-  downloadBlob(`arena-export-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`, text);
+  downloadBlob(`axel-export-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`, text);
 }
 
 async function importData(file) {

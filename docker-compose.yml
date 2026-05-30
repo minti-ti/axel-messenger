@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: arena-messenger-app
+    container_name: axel-messenger-app
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -14,7 +14,7 @@ services:
       - ./uploads:/app/uploads
   minio:
     image: minio/minio:latest
-    container_name: arena-messenger-minio
+    container_name: axel-messenger-minio
     restart: unless-stopped
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -27,7 +27,7 @@ services:
       - minio_data:/data
   postgres:
     image: postgres:16-alpine
-    container_name: arena-messenger-postgres
+    container_name: axel-messenger-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: messenger

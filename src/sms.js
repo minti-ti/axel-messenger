@@ -34,7 +34,7 @@ async function sendLoginCode(phone, code) {
 
     // Привязка есть — пытаемся отправить
     try {
-      const message = `🔐 Ваш код для входа в Arena Messenger:\n\n<pre>${code}</pre>\n\nНикому не сообщайте этот код!`;
+      const message = `🔐 Ваш код для входа в Axel Messenger:\n\n<pre>${code}</pre>\n\nНикому не сообщайте этот код!`;
       await sendTelegramMessage(chatId, message);
       return { mode: 'telegram' };
     } catch (error) {

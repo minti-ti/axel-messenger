@@ -1,5 +1,5 @@
 {
-  "name": "arena-telegram-like-chat",
+  "name": "axel-messenger",
   "version": "1.0.0",
   "description": "Deployable Telegram-like messenger with phone login, private chats, groups and channels.",
   "main": "src/server.js",

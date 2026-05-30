@@ -1783,7 +1783,7 @@ function openSettingsModal() {
       if (typeof isStandalonePWA === 'function' && !isStandalonePWA()) {
         iosPushHint.classList.remove('hidden');
         iosPushHint.textContent = '📱 iOS: Push-уведомления работают только из установленного приложения. ' +
-          'Нажмите «Поделиться» → «На экран Домой» в Safari, затем откройте Arena оттуда и включите уведомления.';
+          'Нажмите «Поделиться» → «На экран Домой» в Safari, затем откройте Axel оттуда и включите уведомления.';
       } else {
         iosPushHint.classList.remove('hidden');
         iosPushHint.style.color = '#4da3ff';

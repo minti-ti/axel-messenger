@@ -1,6 +1,6 @@
 {
-  "name": "Arena Messenger",
-  "short_name": "Arena",
+  "name": "Axel Messenger",
+  "short_name": "Axel",
   "description": "Мессенджер в стиле Telegram: личные чаты, группы, каналы, вложения и сообщения в реальном времени.",
   "start_url": "/?source=pwa",
   "display": "standalone",

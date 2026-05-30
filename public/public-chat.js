@@ -46,7 +46,7 @@ async function bootstrap() {
         <div>${chat.description ? escapeHtml(chat.description) : '<span class="muted">Описание пока не заполнено.</span>'}</div>
       </div>
       <div class="form-card form-row">
-        <div class="muted">Чтобы вступить или открыть этот чат, войдите в Arena Messenger.</div>
+        <div class="muted">Чтобы вступить или открыть этот чат, войдите в Axel Messenger.</div>
       </div>
     `;
   } catch (error) {

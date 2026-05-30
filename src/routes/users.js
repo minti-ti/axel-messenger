@@ -640,7 +640,7 @@ router.get('/me/export', async (req, res) => {
       drafts: draftsResult.rows.map((row) => ({ chatId: row.chat_id, content: row.content, updatedAt: row.updated_at }))
     };
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename=arena-export-${req.user.id}.json`);
+    res.setHeader('Content-Disposition', `attachment; filename=axel-export-${req.user.id}.json`);
     res.send(JSON.stringify(payload, null, 2));
   } catch (error) {
     console.error(error);
