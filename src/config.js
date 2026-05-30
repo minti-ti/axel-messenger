@@ -49,7 +49,9 @@ module.exports = {
   isProduction: IS_PRODUCTION,
   appUrl: process.env.APP_URL || 'http://localhost:3000',
   jwtSecret: JWT_SECRET,
-  allowDevCodeResponse: String(process.env.ALLOW_DEV_CODE_RESPONSE || 'false') === 'true',
+  allowDevCodeResponse: IS_PRODUCTION
+    ? false
+    : String(process.env.ALLOW_DEV_CODE_RESPONSE || 'false') === 'true',
   databaseUrl: resolveDatabaseUrl(),
   uploadsDir: path.join(__dirname, '..', 'uploads'),
   supportPhone: process.env.SUPPORT_PHONE || '',

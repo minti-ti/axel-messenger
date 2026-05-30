@@ -32,7 +32,7 @@ const io = new Server(server, {
     origin: socketCorsOrigin,
     credentials: true
   },
-  maxHttpBufferSize: 25 * 1024 * 1024
+  maxHttpBufferSize: 1 * 1024 * 1024
 });
 
 app.set('io', io);

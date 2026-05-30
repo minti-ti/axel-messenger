@@ -260,3 +260,7 @@ CREATE INDEX IF NOT EXISTS idx_user_folders_user_id ON user_folders(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_folder_chats_folder_id ON user_folder_chats(folder_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_unique ON users ((LOWER(username))) WHERE username IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_username_unique ON chats ((LOWER(username))) WHERE username IS NOT NULL;
+
+-- Partial index для быстрой выборки НЕ удалённых сообщений чата.
+-- Критично для производительности при soft-delete на больших объёмах.
+CREATE INDEX IF NOT EXISTS idx_messages_active ON messages(chat_id, created_at DESC) WHERE deleted_at IS NULL;

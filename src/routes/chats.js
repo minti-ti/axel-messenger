@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -1018,7 +1018,7 @@ router.post('/:chatId/scheduled', async (req, res) => {
 router.post('/messages/delete-bulk', async (req, res) => {
   try {
     const messageIds = Array.isArray(req.body.messageIds) ? req.body.messageIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
-    if (!messageIds.length) return res.status(400).json({ error: 'Не выбраны сообщения для удаления' });
+    if (!messageIds.length || messageIds.length > 100) return res.status(400).json({ error: 'Некорректный список сообщений (max 100)' });
 
     const deleted = [];
     for (const messageId of messageIds) {
@@ -1055,7 +1055,7 @@ router.post('/messages/forward-bulk', async (req, res) => {
   try {
     const targetChatId = String(req.body.targetChatId || '').trim();
     const messageIds = Array.isArray(req.body.messageIds) ? req.body.messageIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
-    if (!targetChatId || !messageIds.length) return res.status(400).json({ error: '╨Э╨╡ ╨▓╤Л╨▒╤А╨░╨╜╤Л ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П ╨╕╨╗╨╕ ╤З╨░╤В ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╤П' });
+    if (!targetChatId || !messageIds.length || messageIds.length > 100) return res.status(400).json({ error: '╨Э╨╡ ╨▓╤Л╨▒╤А╨░╨╜╤Л ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╤П ╨╕╨╗╨╕ ╤З╨░╤В ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╤П' });
     const permission = await canPostToChat(targetChatId, req.user.id);
     if (!permission.allowed) return res.status(403).json({ error: permission.reason });
 
@@ -1090,6 +1090,7 @@ router.post('/messages/forward-bulk', async (req, res) => {
 router.get('/messages/:messageId', async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!messageId || messageId.trim() === "") return res.status(400).json({ error: "Некорректный идентификатор сообщения" });
     const result = await query('SELECT chat_id FROM messages WHERE id = $1', [messageId]);
     const row = result.rows[0];
     if (!row) return res.status(404).json({ error: 'Сообщение не найдено' });
@@ -1112,6 +1113,7 @@ router.get('/messages/:messageId', async (req, res) => {
 router.patch('/messages/:messageId', async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!messageId || messageId.trim() === "") return res.status(400).json({ error: "Некорректный идентификатор сообщения" });
     const content = String(req.body.content || '').trim();
     if (!content) return res.status(400).json({ error: '╨в╨╡╨║╤Б╤В ╨╜╨╡ ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М ╨┐╤Г╤Б╤В╤Л╨╝' });
 
@@ -1142,6 +1144,7 @@ router.patch('/messages/:messageId', async (req, res) => {
 router.delete('/messages/:messageId', async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!messageId || messageId.trim() === "") return res.status(400).json({ error: "Некорректный идентификатор сообщения" });
     const result = await query('SELECT * FROM messages WHERE id = $1', [messageId]);
     const message = result.rows[0];
     if (!message) return res.status(404).json({ error: 'Сообщение не найдено' });
@@ -1184,6 +1187,7 @@ router.delete('/messages/:messageId', async (req, res) => {
 router.post('/messages/:messageId/reactions', async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!messageId || messageId.trim() === "") return res.status(400).json({ error: "Некорректный идентификатор сообщения" });
     const emoji = String(req.body.emoji || '').trim();
     if (!emoji) return res.status(400).json({ error: '╨г╨║╨░╨╢╨╕╤В╨╡ emoji' });
 
@@ -1214,6 +1218,7 @@ router.post('/messages/:messageId/reactions', async (req, res) => {
 router.post('/messages/:messageId/forward', async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!messageId || messageId.trim() === "") return res.status(400).json({ error: "Некорректный идентификатор сообщения" });
     const targetChatId = String(req.body.targetChatId || '').trim();
     if (!targetChatId) return res.status(400).json({ error: '╨Э╨╡ ╤Г╨║╨░╨╖╨░╨╜ ╤Ж╨╡╨╗╨╡╨▓╨╛╨╣ ╤З╨░╤В' });
 

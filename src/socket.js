@@ -3,6 +3,26 @@ const { getTokenFromSocket, fetchUserById, fetchSession } = require('./auth');
 const { getUserChatIds, isChatMember, listChats } = require('./chatService');
 
 const onlineUsers = new Map();
+const wsRateLimits = new Map();
+
+function checkWsRateLimit(userId, event, maxCount = 30, windowMs = 60000) {
+  const key = `${userId}:${event}`;
+  const now = Date.now();
+  let record = wsRateLimits.get(key);
+  if (!record) {
+    record = { count: 1, resetAt: now + windowMs };
+    wsRateLimits.set(key, record);
+    return true;
+  }
+  if (now > record.resetAt) {
+    record.count = 1;
+    record.resetAt = now + windowMs;
+    return true;
+  }
+  record.count += 1;
+  if (record.count > maxCount) return false;
+  return true;
+}
 
 async function broadcastPresence(io, userId, isOnline) {
   const chatIds = await getUserChatIds(userId);
@@ -41,11 +61,13 @@ function attachSocket(io) {
 
     socket.on('chat:join', async ({ chatId }) => {
       if (!chatId) return;
+      if (!checkWsRateLimit(userId, 'chat:join', 20, 60000)) return;
       const member = await isChatMember(chatId, userId);
       if (member) socket.join(chatId);
     });
 
     socket.on('typing:start', async ({ chatId }) => {
+      if (!checkWsRateLimit(userId, 'typing', 30, 60000)) return;
       const member = await isChatMember(chatId, userId);
       if (!member) return;
       socket.to(chatId).emit('typing:update', {
@@ -57,6 +79,7 @@ function attachSocket(io) {
     });
 
     socket.on('typing:stop', async ({ chatId }) => {
+      if (!checkWsRateLimit(userId, 'typing', 30, 60000)) return;
       const member = await isChatMember(chatId, userId);
       if (!member) return;
       socket.to(chatId).emit('typing:update', {

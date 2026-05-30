@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { signToken, authMiddleware } = require('../auth');
@@ -6,6 +7,10 @@ const { sendLoginCode } = require('../sms');
 const { normalizePhone, makeCode, formatPublicUser } = require('../utils');
 const config = require('../config');
 const { ensureSuperadminModerationMembership } = require('../moderationService');
+
+function hashLoginCode(code) {
+  return crypto.createHmac('sha256', config.jwtSecret).update(String(code)).digest('hex');
+}
 
 const router = express.Router();
 
@@ -42,7 +47,7 @@ router.post('/request-code', async (req, res) => {
        VALUES ($1, $2, $3, 0, NOW())
        ON CONFLICT (phone)
        DO UPDATE SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at, attempts = 0, requested_at = NOW()`,
-      [phone, code, expiresAt]
+      [phone, hashLoginCode(code), expiresAt]
     );
 
     let delivery;
@@ -108,7 +113,7 @@ router.post('/verify-code', async (req, res) => {
     if (stored.attempts >= 5) {
       return res.status(429).json({ error: 'Слишком много попыток. Запросите новый код' });
     }
-    if (stored.code !== code) {
+    if (stored.code !== hashLoginCode(code)) {
       await query('UPDATE login_codes SET attempts = attempts + 1 WHERE phone = $1', [phone]);
       return res.status(400).json({ error: 'Неверный код' });
     }
