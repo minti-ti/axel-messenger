@@ -1731,3 +1731,32 @@ body[data-theme='light'] .md-spoiler.revealed { background: rgba(0,0,0,0.06); }
 .chat-panel[data-wallpaper="none"] {
   background: var(--bg) !important;
 }
+.chat-panel[data-wallpaper="theme"] {
+  background: var(--bg) !important;
+}
+.chat-panel[data-wallpaper="theme-accent"] {
+  background: radial-gradient(ellipse at 30% 20%, var(--primary-soft), transparent 50%),
+              radial-gradient(ellipse at 70% 80%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 50%),
+              var(--bg) !important;
+}
+.chat-panel[data-wallpaper="gradient-6"] {
+  background: linear-gradient(160deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-7"] {
+  background: linear-gradient(135deg, #141e30 0%, #243b55 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-8"] {
+  background: linear-gradient(180deg, #0f0c29 0%, #302b63 50%, #24243e 100%) !important;
+}
+.chat-panel[data-wallpaper="custom"] {
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+/* Затемнение поверх кастомного фото, чтобы текст читался */
+.chat-panel[data-wallpaper="custom"] .message-list {
+  background: rgba(0, 0, 0, 0.35);
+}
+body[data-theme='light'] .chat-panel[data-wallpaper="custom"] .message-list {
+  background: rgba(255, 255, 255, 0.45);
+}

@@ -1600,12 +1600,24 @@ function openSettingsModal() {
         <div class="form-card form-row">
           <div><strong>Фон чата</strong></div>
           <div class="inline-actions" style="flex-wrap:wrap;gap:8px;">
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="none" style="background:#0b1220;width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Без фона"></button>
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-1" style="background:linear-gradient(135deg,#0b1220,#1a1040);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Пурпур"></button>
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-2" style="background:linear-gradient(180deg,#0d1b2a,#1b2838);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Ночь"></button>
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-3" style="background:linear-gradient(135deg,#0a192f,#20123a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Индиго"></button>
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-4" style="background:linear-gradient(180deg,#1a0a2e,#16213e,#0f3460);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Космос"></button>
-            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-5" style="background:linear-gradient(135deg,#0c1618,#1a3a2a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Лес"></button>
+            <button type="button" class="wallpaper-btn" data-wp="none" style="background:var(--bg);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);font-size:10px;color:var(--muted);" title="Стандарт">⬛</button>
+            <button type="button" class="wallpaper-btn" data-wp="theme" style="background:var(--bg);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);font-size:10px;color:var(--muted);" title="Цвет темы">🎨</button>
+            <button type="button" class="wallpaper-btn" data-wp="theme-accent" style="background:radial-gradient(ellipse at 30% 20%,var(--primary-soft),transparent),var(--bg);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);font-size:10px;color:var(--muted);" title="Акцент темы">✨</button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-1" style="background:linear-gradient(135deg,#0b1220,#1a1040);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Пурпур"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-2" style="background:linear-gradient(180deg,#0d1b2a,#1b2838);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Ночь"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-3" style="background:linear-gradient(135deg,#0a192f,#20123a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Индиго"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-4" style="background:linear-gradient(180deg,#1a0a2e,#16213e,#0f3460);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Космос"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-5" style="background:linear-gradient(135deg,#0c1618,#1a3a2a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Лес"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-6" style="background:linear-gradient(160deg,#1a1a2e,#16213e,#0f3460);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Океан"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-7" style="background:linear-gradient(135deg,#141e30,#243b55);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Сталь"></button>
+            <button type="button" class="wallpaper-btn" data-wp="gradient-8" style="background:linear-gradient(180deg,#0f0c29,#302b63,#24243e);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Неон"></button>
+          </div>
+          <div style="margin-top:8px;">
+            <label class="secondary-btn" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+              🖼 Своё фото
+              <input type="file" accept="image/*" id="customWallpaperInput" style="display:none" />
+            </label>
+            <button type="button" id="clearCustomWallpaperBtn" class="ghost-btn small" style="margin-left:8px;display:none;">Удалить фото</button>
           </div>
         </div>
         <div class="form-card form-row">
@@ -1727,20 +1739,81 @@ function openSettingsModal() {
     };
   });
   // Обои чата
+  const currentWp = localStorage.getItem('chatWallpaper') || '';
   document.querySelectorAll('.wallpaper-btn').forEach((button) => {
     button.onclick = () => {
       const wp = button.dataset.wp;
       localStorage.setItem('chatWallpaper', wp);
+      // При выборе пресета убираем custom фото
+      if (wp !== 'custom') localStorage.removeItem('chatWallpaperImage');
       applyWallpaper();
       document.querySelectorAll('.wallpaper-btn').forEach(b => b.style.borderColor = 'var(--border)');
       button.style.borderColor = 'var(--primary)';
       showToast('Фон чата обновлён');
+      // Обновим видимость кнопки удаления
+      const clearBtn = document.getElementById('clearCustomWallpaperBtn');
+      if (clearBtn) clearBtn.style.display = wp === 'custom' ? 'inline-block' : 'none';
     };
     // Подсветить текущий
-    if (button.dataset.wp === (localStorage.getItem('chatWallpaper') || '')) {
+    if (button.dataset.wp === currentWp) {
       button.style.borderColor = 'var(--primary)';
     }
   });
+  // Своё фото — загрузка
+  const customWpInput = document.getElementById('customWallpaperInput');
+  const clearCustomBtn = document.getElementById('clearCustomWallpaperBtn');
+  if (clearCustomBtn && currentWp === 'custom') clearCustomBtn.style.display = 'inline-block';
+  if (customWpInput) {
+    customWpInput.onchange = () => {
+      const file = customWpInput.files?.[0];
+      if (!file) return;
+      if (file.size > 5 * 1024 * 1024) {
+        showToast('Файл слишком большой (макс. 5 МБ)', true);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        // Сжимаем для localStorage (макс ~2.5MB data URI)
+        const img = new Image();
+        img.onload = () => {
+          const maxSide = 1200;
+          const ratio = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const w = Math.round(img.width * ratio);
+          const h = Math.round(img.height * ratio);
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+          try {
+            localStorage.setItem('chatWallpaperImage', dataUrl);
+            localStorage.setItem('chatWallpaper', 'custom');
+            applyWallpaper();
+            document.querySelectorAll('.wallpaper-btn').forEach(b => b.style.borderColor = 'var(--border)');
+            if (clearCustomBtn) clearCustomBtn.style.display = 'inline-block';
+            showToast('Фон чата установлен');
+          } catch (e) {
+            showToast('Фото слишком большое для сохранения', true);
+          }
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    };
+  }
+  if (clearCustomBtn) {
+    clearCustomBtn.onclick = () => {
+      localStorage.removeItem('chatWallpaperImage');
+      localStorage.setItem('chatWallpaper', 'none');
+      applyWallpaper();
+      clearCustomBtn.style.display = 'none';
+      document.querySelectorAll('.wallpaper-btn').forEach(b => b.style.borderColor = 'var(--border)');
+      const noneBtn = document.querySelector('.wallpaper-btn[data-wp="none"]');
+      if (noneBtn) noneBtn.style.borderColor = 'var(--primary)';
+      showToast('Фон удалён');
+    };
+  }
   const manageFoldersBtn = document.getElementById('manageFoldersBtn');
   if (manageFoldersBtn) manageFoldersBtn.onclick = () => openFoldersModal();
   const sessionsBtn = document.getElementById('sessionsBtn');

@@ -19,9 +19,21 @@
 function applyWallpaper() {
   const wp = localStorage.getItem('chatWallpaper') || '';
   const panel = document.querySelector('.chat-panel');
-  if (panel) {
-    if (wp) panel.dataset.wallpaper = wp;
-    else delete panel.dataset.wallpaper;
+  if (!panel) return;
+  // Сбросим inline background-image (от предыдущего custom)
+  panel.style.backgroundImage = '';
+  if (wp === 'custom') {
+    const img = localStorage.getItem('chatWallpaperImage') || '';
+    if (img) {
+      panel.dataset.wallpaper = 'custom';
+      panel.style.backgroundImage = 'url(' + img + ')';
+    } else {
+      delete panel.dataset.wallpaper;
+    }
+  } else if (wp) {
+    panel.dataset.wallpaper = wp;
+  } else {
+    delete panel.dataset.wallpaper;
   }
 }
 
