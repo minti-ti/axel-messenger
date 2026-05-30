@@ -1,5 +1,87 @@
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('./db');
+const { decryptMessage } = require('./encryption');
+
+/**
+ * Расшифровывает на лету «легаси»-сообщения, которые были сохранены как
+ * server-side ciphertext (is_encrypted = true) старыми версиями приложения.
+ *
+ * Новые сообщения сохраняются в открытом виде (server-side шифрование с ключом
+ * в той же БД не давало реальной защиты и при этом ломало чтение), поэтому эта
+ * функция нужна только для обратной совместимости со старыми записями.
+ *
+ * Принимает массив «сырых» строк из messageSelect() и мутирует поле content
+ * (а также reply_content, если оно зашифровано) на расшифрованный текст.
+ */
+async function decryptLegacyRows(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const encryptedRows = rows.filter((row) => row && row.is_encrypted && row.content);
+  if (!encryptedRows.length) return rows;
+
+  const chatIds = [...new Set(encryptedRows.map((row) => row.chat_id).filter(Boolean))];
+  if (!chatIds.length) return rows;
+
+  const keyResult = await query(
+    `SELECT DISTINCT ON (chat_id) chat_id, key_data
+     FROM encryption_keys
+     WHERE chat_id = ANY($1::text[])
+     ORDER BY chat_id, version DESC`,
+    [chatIds]
+  );
+  const keyByChat = new Map(keyResult.rows.map((row) => [row.chat_id, row.key_data]));
+
+  for (const row of encryptedRows) {
+    const key = keyByChat.get(row.chat_id);
+    if (!key) continue;
+    try {
+      row.content = decryptMessage(row.content, key);
+      row.is_encrypted = false;
+      // reply-превью указывает на сообщение того же чата → тот же ключ
+      if (row.reply_content) {
+        try { row.reply_content = decryptMessage(row.reply_content, key); } catch (_) { /* оставляем как есть */ }
+      }
+    } catch (_) {
+      // Не удалось расшифровать (повреждённые данные / сменился ключ) — оставляем как есть.
+    }
+  }
+  return rows;
+}
+
+/**
+ * Расшифровывает превью последнего/закреплённого сообщения в списке чатов.
+ * Работает с алиасами last_message_content / pinned_message_content и
+ * соответствующими *_encrypted флагами из listChats().
+ */
+async function decryptChatPreviews(rows) {
+  if (!Array.isArray(rows) || !rows.length) return rows;
+  const needsKey = rows.filter(
+    (row) => row && ((row.last_message_encrypted && row.last_message_content) ||
+                     (row.pinned_message_encrypted && row.pinned_message_content))
+  );
+  if (!needsKey.length) return rows;
+
+  const chatIds = [...new Set(needsKey.map((row) => row.id).filter(Boolean))];
+  const keyResult = await query(
+    `SELECT DISTINCT ON (chat_id) chat_id, key_data
+     FROM encryption_keys
+     WHERE chat_id = ANY($1::text[])
+     ORDER BY chat_id, version DESC`,
+    [chatIds]
+  );
+  const keyByChat = new Map(keyResult.rows.map((row) => [row.chat_id, row.key_data]));
+
+  for (const row of needsKey) {
+    const key = keyByChat.get(row.id);
+    if (!key) continue;
+    if (row.last_message_encrypted && row.last_message_content) {
+      try { row.last_message_content = decryptMessage(row.last_message_content, key); } catch (_) { /* skip */ }
+    }
+    if (row.pinned_message_encrypted && row.pinned_message_content) {
+      try { row.pinned_message_content = decryptMessage(row.pinned_message_content, key); } catch (_) { /* skip */ }
+    }
+  }
+  return rows;
+}
 
 async function isChatMember(chatId, userId) {
   const result = await query(
@@ -96,10 +178,12 @@ function baseChatSelect() {
       peer.avatar_url AS peer_avatar_url,
       lm.id AS last_message_id,
       lm.content AS last_message_content,
+      lm.is_encrypted AS last_message_encrypted,
       lm.attachment_name AS last_message_attachment,
       lm.created_at AS last_message_at,
       pm.id AS pinned_message_id,
       pm.content AS pinned_message_content,
+      pm.is_encrypted AS pinned_message_encrypted,
       pm.attachment_name AS pinned_message_attachment_name,
       pm.created_at AS pinned_message_created_at,
       (SELECT COUNT(*)::int FROM chat_members x WHERE x.chat_id = c.id) AS member_count
@@ -124,6 +208,7 @@ function baseChatSelect() {
 
 async function getChatById(chatId, viewerUserId) {
   const result = await query(`${baseChatSelect()} WHERE c.id = $2`, [viewerUserId, chatId]);
+  await decryptChatPreviews(result.rows);
   return mapChat(result.rows[0]);
 }
 
@@ -147,10 +232,12 @@ async function listChats(userId) {
       peer.avatar_url AS peer_avatar_url,
       lm.id AS last_message_id,
       lm.content AS last_message_content,
+      lm.is_encrypted AS last_message_encrypted,
       lm.attachment_name AS last_message_attachment,
       lm.created_at AS last_message_at,
       pm.id AS pinned_message_id,
       pm.content AS pinned_message_content,
+      pm.is_encrypted AS pinned_message_encrypted,
       pm.attachment_name AS pinned_message_attachment_name,
       pm.created_at AS pinned_message_created_at,
       (SELECT COUNT(*)::int FROM chat_members x WHERE x.chat_id = c.id) AS member_count,
@@ -175,6 +262,7 @@ async function listChats(userId) {
     ORDER BY cm.pinned DESC, cm.favorite DESC, cm.archived ASC, COALESCE(lm.created_at, c.created_at) DESC`,
     [userId]
   );
+  await decryptChatPreviews(result.rows);
   return result.rows.map((row) => ({ ...mapChat(row), unreadCount: Number(row.unread_count || 0) }));
 }
 
@@ -344,6 +432,7 @@ async function formatMessage(messageId) {
   const result = await query(`${messageSelect()} WHERE m.id = $1 AND m.deleted_at IS NULL`, [messageId]);
   const msg = result.rows[0];
   if (!msg) return null;
+  await decryptLegacyRows([msg]);
   const reactionsResult = await query('SELECT message_id, user_id, emoji, created_at FROM reactions WHERE message_id = $1 ORDER BY created_at ASC', [messageId]);
   const reactionsMap = new Map([[messageId, reactionsResult.rows]]);
   return mapMessageRow(msg, reactionsMap);
@@ -360,6 +449,7 @@ async function listMessages(chatId, userId, limit = 50) {
   );
   const rows = result.rows.reverse();
   if (!rows.length) return [];
+  await decryptLegacyRows(rows);
   const messageIds = rows.map((row) => row.id);
   const reactionsResult = await query(
     'SELECT message_id, user_id, emoji, created_at FROM reactions WHERE message_id = ANY($1::text[]) ORDER BY created_at ASC',

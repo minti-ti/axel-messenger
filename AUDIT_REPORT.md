@@ -433,13 +433,41 @@ function requireInProduction(name, value, options = {}) {
 
 ---
 
-### ⏳ В работе
+### ✅ Исправлено (2026-05-30)
 
-| # | Проблема | Приоритет |
+| # | Проблема | Статус |
 |---|---|---|
-| 4 | Авторизация `/files/*` — проверка членства в чате | 🔴 |
-| 5 | Расширение по mimetype + Content-Disposition | 🟠 |
-| 6 | Сужение CORS Socket.IO | 🟠 |
-| 7 | Проверка `canPostToChat` для forward-bulk | 🟡 |
-| 8 | Тесты и CI | 🟡 |
+| 4 | Авторизация `/files/*` — проверка членства в чате | ✅ `optionalAuth` + `userCanAccessAttachment()` |
+| 5 | Расширение по mimetype + Content-Disposition | ✅ `safeExtension()` + `contentDispositionHeader()` |
+| 6 | Сужение CORS Socket.IO | ✅ `socketCorsOrigin` = `[appUrl]` в prod |
+| 7 | Проверка `canPostToChat` для forward-bulk | ✅ вызывается на target chat |
+| 8 | `phoneToChatId` в RAM → таблица `telegram_bindings` | ✅ |
+| 9 | **Critical:** `fast-xml-parser` через старый `@aws-sdk/client-s3` | ✅ bump до `^3.1057.0`, `npm audit` = 0 |
+| 10 | **Critical:** приватные чаты показывали `[Зашифрованное сообщение]` | ✅ см. ниже |
+| 11 | Дубликат JSDoc-блока в `encryption.js` | ✅ удалён |
+| 12 | Строгая TLS-проверка БД отключена жёстко | ✅ `DB_SSL_STRICT` / `DB_SSL_CA` |
+| 13 | Внешний placeholder-image в README | ✅ заменён на текстовый заголовок |
+| 14 | Нет CI | ✅ `.github/workflows/ci.yml` (`node --check` + `npm audit`) |
+
+#### Детали #10 — сломанное «шифрование» приватных чатов
+
+**Симптом:** все текстовые сообщения в приватных чатах сохранялись как
+server-side ciphertext (`encryptMessage` на write-path), но `decryptMessage` на
+сервере **не вызывался нигде**, а клиент **не получал ключ** (`storeEncryptionKey`
+в `app.js` никогда не вызывался). Итог — пользователи видели
+`[Зашифрованное сообщение]` вместо текста. При этом «шифрование» не давало
+никакой реальной защиты (ключ лежал в той же БД, в таблице `encryption_keys`).
+
+**Исправление:**
+- Новые сообщения сохраняются в открытом виде (`isEncrypted = false`),
+  как в группах/каналах.
+- Старые зашифрованные записи (`is_encrypted = true`) **расшифровываются на лету
+  на сервере** — `decryptLegacyRows()` / `decryptChatPreviews()` в `chatService.js`,
+  подключены в `formatMessage`, `listMessages`, `listChats`, `getChatById`.
+- Поиск (`/search/messages`) фильтрует `is_encrypted = FALSE`, чтобы не
+  искать по нечитаемому шифротексту.
+
+Для **настоящей** приватности нужен полноценный E2E (ключи генерируются на
+клиенте, сервер хранит только публичные ключи). Текущая правка возвращает
+работоспособность чтения, не претендуя на E2E.
 
