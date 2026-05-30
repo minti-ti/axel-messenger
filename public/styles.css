@@ -742,7 +742,7 @@ body.compact-chats .chat-preview { -webkit-line-clamp: 1; }
 .switch:checked::after { transform: translateX(18px); }
 .toast {
   position: fixed;
-  top: 18px;
+  top: calc(18px + env(safe-area-inset-top, 0px));
   right: 18px;
   z-index: 1400;
   background: color-mix(in srgb, var(--panel) 95%, transparent);

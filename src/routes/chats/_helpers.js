@@ -266,12 +266,14 @@ async function pushNotifyOfflineMembers(app, chatId, message) {
 
     // Fire-and-forget. await нужен, чтобы исключения внутри не превратились
     // в unhandled rejection — сама функция sendPushToUsers их уже глотает.
-    await sendPushToUsers(recipients, payload);
+    const pushResult = await sendPushToUsers(recipients, payload);
+    // Логируем результат для диагностики iOS APNs.
+    if (pushResult.sent > 0 || pushResult.failed > 0 || pushResult.removed > 0) {
+      console.log(`[push] chatId=${chatId} recipients=${recipients.length} sent=${pushResult.sent} failed=${pushResult.failed} removed=${pushResult.removed}`);
+    }
   } catch (error) {
     // Push не должен ронять отправку сообщения. Просто логируем.
-    if (!require('../../config').isProduction) {
-      console.warn('[push] notify offline members failed:', error.message);
-    }
+    console.warn('[push] notify offline members failed:', error.message);
   }
 }
 

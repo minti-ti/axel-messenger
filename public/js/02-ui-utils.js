@@ -603,22 +603,29 @@ async function enablePushNotifications() {
     const { publicKey } = await keyRes.json();
     if (!publicKey) return 'unconfigured';
 
-    // 3. Подписка через PushManager. Если уже подписаны на этот же ключ —
-    // вернётся существующая subscription без повторного запроса.
+    // 3. Подписка через PushManager.
+    // На iOS подписка может протухать при перезапуске PWA. Поэтому:
+    // - Сначала пробуем взять существующую
+    // - Если нет — создаём новую
+    // - Всегда отправляем на сервер (upsert по endpoint)
     let subscription = await reg.pushManager.getSubscription();
     if (!subscription) {
       subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true, // обязательно для Web Push — каждый push должен приводить к видимому уведомлению
+        userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(publicKey)
       });
     }
 
-    // 4. Отправить подписку на сервер. POST идемпотентен по endpoint.
+    // 4. ВСЕГДА отправляем подписку на сервер при каждом запуске.
+    // POST идемпотентен по endpoint (ON CONFLICT DO UPDATE).
+    // Это критично для iOS: ключи (p256dh, auth) могут ротироваться,
+    // и без обновления на сервере push не дойдёт.
     const subJson = subscription.toJSON();
     await api('/api/users/me/push-subscriptions', {
       method: 'POST',
       body: { subscription: subJson }
     });
+    console.log('[push] subscription synced to server, endpoint:', subscription.endpoint.slice(0, 60) + '...');
 
     return 'granted';
   } catch (error) {

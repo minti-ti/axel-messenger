@@ -259,19 +259,16 @@ async function bootstrap() {
     connectSocket();
     await handleInitialRoute();
     // Регистрируем Service Worker — нужен для PWA cache, offline и push.
-    // ensureServiceWorker() теперь не зависит от pushSupported() — SW
-    // регистрируется всегда, включая iOS Safari (не standalone).
     if (typeof ensureServiceWorker === 'function') {
       ensureServiceWorker().then((reg) => {
         if (!reg) return;
-        // Если push поддерживается и permission уже granted — переподписываемся
-        // на случай если подписка была отозвана push-сервисом.
-        if (typeof getPushStatus === 'function') {
-          getPushStatus().then((s) => {
-            if (s.supported && s.permission === 'granted' && !s.subscribed) {
-              enablePushNotifications().catch(() => {});
-            }
-          }).catch(() => {});
+        // iOS Safari может отзывать push-подписку при каждом перезапуске PWA.
+        // Поэтому при каждом старте БЕЗУСЛОВНО переподписываемся, если
+        // permission уже 'granted'. enablePushNotifications() идемпотентна —
+        // PushManager.subscribe() вернёт существующую подписку если endpoint
+        // не изменился, а POST /push-subscriptions — upsert по endpoint.
+        if (typeof enablePushNotifications === 'function' && 'Notification' in window && Notification.permission === 'granted') {
+          enablePushNotifications().catch(() => {});
         }
       }).catch(() => {});
     }
