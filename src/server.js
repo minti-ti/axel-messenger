@@ -114,7 +114,10 @@ function sendPublicAsset(res, filename, type) {
 }
 
 app.get('/styles.css', (_, res) => sendPublicAsset(res, 'styles.css', 'text/css'));
-app.get('/app.js', (_, res) => sendPublicAsset(res, 'app.js', 'application/javascript'));
+// Старый алиас /app.js был привязан к монолитному public/app.js (которого
+// уже нет в репо: исходник лежал в public/js/app.js). Теперь фронт разрезан
+// на 4 файла public/js/0X-*.js, и каждый из них раздаётся express.static —
+// отдельный alias не нужен.
 app.get('/public-profile.js', (_, res) => sendPublicAsset(res, 'public-profile.js', 'application/javascript'));
 app.get('/public-chat.js', (_, res) => sendPublicAsset(res, 'public-chat.js', 'application/javascript'));
 
