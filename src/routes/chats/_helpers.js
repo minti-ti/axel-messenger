@@ -20,6 +20,7 @@ const config = require('../../config');
 const { normalizePhone, normalizeUsername } = require('../../utils');
 const { generateEncryptionKey } = require('../../encryption');
 const { listChats } = require('../../chatService');
+const log = require('../../logger');
 
 // --- Rate-limit и подозрительная активность ---
 // In-memory счётчики rate-limit. Ограничены по размеру и времени, чтобы не утекали.
@@ -70,7 +71,7 @@ function logSuspiciousActivity(userId, reason, details = {}) {
   suspiciousActivityLog.set(key, entry);
 
   if (config.isProduction && entry.count > 5) {
-    console.warn(`[SECURITY] Suspicious activity detected - User: ${userId}, Reason: ${reason}, Count: ${entry.count}`, details);
+    log.warn(`[SECURITY] Suspicious activity detected - User: ${userId}, Reason: ${reason}, Count: ${entry.count}`, details);
   }
 }
 
@@ -269,11 +270,11 @@ async function pushNotifyOfflineMembers(app, chatId, message) {
     const pushResult = await sendPushToUsers(recipients, payload);
     // Логируем результат для диагностики iOS APNs.
     if (pushResult.sent > 0 || pushResult.failed > 0 || pushResult.removed > 0) {
-      console.log(`[push] chatId=${chatId} recipients=${recipients.length} sent=${pushResult.sent} failed=${pushResult.failed} removed=${pushResult.removed}`);
+      log.info(`[push] chatId=${chatId} recipients=${recipients.length} sent=${pushResult.sent} failed=${pushResult.failed} removed=${pushResult.removed}`);
     }
   } catch (error) {
     // Push не должен ронять отправку сообщения. Просто логируем.
-    console.warn('[push] notify offline members failed:', error.message);
+    log.warn({ err: error }, '[push] notify offline members failed');
   }
 }
 

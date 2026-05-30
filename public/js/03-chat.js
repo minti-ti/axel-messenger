@@ -1588,13 +1588,36 @@ function openSettingsModal() {
           <input class="switch" type="checkbox" name="allowUsernameLookup" ${state.settings.allowUsernameLookup ? 'checked' : ''} />
         </div>
         <div class="form-card form-row">
-          <div><strong>Уведомления браузера</strong></div>
+          <div><strong>🔔 Уведомления</strong></div>
+          <div class="settings-option">
+            <div>Уведомления вообще<div class="muted">Глобальный выключатель всех уведомлений</div></div>
+            <input class="switch" type="checkbox" name="notificationsEnabled" ${state.settings.notificationsEnabled ? 'checked' : ''} />
+          </div>
+          <div class="settings-option">
+            <div>О личных сообщениях</div>
+            <input class="switch" type="checkbox" name="notifyPrivateChats" ${state.settings.notifyPrivateChats ? 'checked' : ''} />
+          </div>
+          <div class="settings-option">
+            <div>О группах и каналах</div>
+            <input class="switch" type="checkbox" name="notifyGroups" ${state.settings.notifyGroups ? 'checked' : ''} />
+          </div>
+          <div class="settings-option">
+            <div>Только упоминания в группах<div class="muted">Для тихих чатов — уведомлять только когда вас @упомянули</div></div>
+            <input class="switch" type="checkbox" name="notifyMentions" ${state.settings.notifyMentions ? 'checked' : ''} />
+          </div>
+          <div class="settings-option">
+            <div>🔊 Звук при новом сообщении</div>
+            <input class="switch" type="checkbox" name="notifySound" ${state.settings.notifySound ? 'checked' : ''} />
+          </div>
+        </div>
+        <div class="form-card form-row">
+          <div><strong>Push-уведомления (фоновые)</strong></div>
           <div class="notification-note">Разрешение: ${'Notification' in window ? Notification.permission : 'не поддерживается'}</div>
-          <div class="notification-note muted" id="pushStatusLabel">Push-уведомления (background): проверка…</div>
+          <div class="notification-note muted" id="pushStatusLabel">Push: проверка…</div>
           <div id="iosPushHint" class="notification-note muted hidden" style="color: #f0ad4e;"></div>
           <div class="inline-actions">
-            <button id="enableNotificationsBtn" type="button" class="secondary-btn">Включить уведомления</button>
-            <button id="disablePushBtn" type="button" class="secondary-btn hidden">Выключить push на этом устройстве</button>
+            <button id="enableNotificationsBtn" type="button" class="secondary-btn">Включить push</button>
+            <button id="disablePushBtn" type="button" class="secondary-btn hidden">Выключить push на устройстве</button>
           </div>
         </div>
         <div class="form-card form-row">
@@ -1645,7 +1668,12 @@ function openSettingsModal() {
           showArchiveTab: formData.get('showArchiveTab') === 'on',
           phoneVisibility: formData.get('phoneVisibility'),
           lastSeenVisibility: formData.get('lastSeenVisibility'),
-          allowUsernameLookup: formData.get('allowUsernameLookup') === 'on'
+          allowUsernameLookup: formData.get('allowUsernameLookup') === 'on',
+          notificationsEnabled: formData.get('notificationsEnabled') === 'on',
+          notifyPrivateChats: formData.get('notifyPrivateChats') === 'on',
+          notifyGroups: formData.get('notifyGroups') === 'on',
+          notifyMentions: formData.get('notifyMentions') === 'on',
+          notifySound: formData.get('notifySound') === 'on'
         }
       });
       state.settings = result.settings;

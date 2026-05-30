@@ -16,6 +16,7 @@ const { formatMessage, listChats } = require('./chatService');
 const { streamStoredFile, sanitizeStorageKey, buildFileUrlFromKey } = require('./storage');
 const { handleTelegramWebhook, setupWebhook } = require('./telegramBot');
 const { initPush, isPushReady } = require('./pushService');
+const log = require('./logger');
 const { pushNotifyOfflineMembers } = require('./routes/chats/_helpers');
 
 const app = express();
@@ -83,14 +84,14 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const duration = Date.now() - start;
     if (config.isProduction) {
-      console.log(JSON.stringify({
+      log.info({
         event: 'request',
         method: req.method,
         path: req.path,
         status: res.statusCode,
         durationMs: duration,
         ip: req.ip
-      }));
+      }, `${req.method} ${req.path} ${res.statusCode} ${duration}ms`);
     }
   });
   next();
@@ -368,7 +369,7 @@ async function processScheduledMessages() {
     } catch (error) {
       // Если вставка упала — откатываем «выдачу», чтобы повторить позже.
       // Иначе сообщение будет считаться отправленным, а его нет.
-      console.error('[scheduled] dispatch failed for', messageId, error.message);
+      log.error('[scheduled] dispatch failed for', messageId, error.message);
       await query('UPDATE scheduled_messages SET sent_at = NULL WHERE id = $1', [messageId]).catch(() => {});
     }
   }
@@ -380,7 +381,7 @@ async function processScheduledMessages() {
     setupWebhook();
     const pushEnabled = initPush();
     if (!pushEnabled && config.isProduction) {
-      console.warn('[push] VAPID keys not configured — web push notifications disabled. ' +
+      log.warn('[push] VAPID keys not configured — web push notifications disabled. ' +
         'Generate: node -e "console.log(require(\'web-push\').generateVAPIDKeys())"');
     }
     setInterval(() => { processScheduledMessages().catch((error) => console.error('Scheduled dispatch error', error)); }, 5000);
@@ -392,7 +393,7 @@ async function processScheduledMessages() {
           return new URL(config.databaseUrl).host;
         } catch { return '(invalid)'; }
       })();
-      console.log(JSON.stringify({
+      log.info({
         event: 'server:started',
         port: config.port,
         env: config.nodeEnv,
@@ -406,7 +407,7 @@ async function processScheduledMessages() {
       }));
     });
   } catch (error) {
-    console.error('Failed to start application', error);
+    log.fatal({ err: error }, 'Failed to start application');
     process.exit(1);
   }
 })();

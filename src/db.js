@@ -62,7 +62,17 @@ async function initDb() {
   // Миграции: добавляем колонки, которых может не быть в старых БД.
   // ALTER TABLE ... IF NOT EXISTS гарантирует идемпотентность.
   const migrations = [
-    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE"
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notify_mentions BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notify_private_chats BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notify_groups BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS notify_sound BOOLEAN NOT NULL DEFAULT TRUE",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_messages_content_length') THEN ALTER TABLE messages ADD CONSTRAINT chk_messages_content_length CHECK (length(content) <= 10000); END IF; END $$",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_display_name_length') THEN ALTER TABLE users ADD CONSTRAINT chk_users_display_name_length CHECK (length(display_name) <= 120); END IF; END $$",
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_users_bio_length') THEN ALTER TABLE users ADD CONSTRAINT chk_users_bio_length CHECK (length(bio) <= 1000); END IF; END $$",
+    "CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages (chat_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (user_id)"
   ];
   for (const migration of migrations) {
     try { await pool.query(migration); } catch (_) { /* column already exists */ }

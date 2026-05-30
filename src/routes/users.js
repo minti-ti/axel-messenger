@@ -288,9 +288,14 @@ router.patch('/me/settings', async (req, res) => {
     const phoneVisibility = ['everyone', 'nobody'].includes(String(req.body.phoneVisibility || '').trim()) ? String(req.body.phoneVisibility || '').trim() : 'everyone';
     const lastSeenVisibility = ['everyone', 'nobody'].includes(String(req.body.lastSeenVisibility || '').trim()) ? String(req.body.lastSeenVisibility || '').trim() : 'everyone';
     const allowUsernameLookup = req.body.allowUsernameLookup !== false;
+    const notificationsEnabled = req.body.notificationsEnabled !== false;
+    const notifyMentions = req.body.notifyMentions !== false;
+    const notifyPrivateChats = req.body.notifyPrivateChats !== false;
+    const notifyGroups = req.body.notifyGroups !== false;
+    const notifySound = req.body.notifySound !== false;
     const result = await query(
-      `INSERT INTO user_settings (user_id, theme, compact_chats, send_on_enter, show_previews, accent_color, show_favorite_tab, show_archive_tab, phone_visibility, last_seen_visibility, allow_username_lookup, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+      `INSERT INTO user_settings (user_id, theme, compact_chats, send_on_enter, show_previews, accent_color, show_favorite_tab, show_archive_tab, phone_visibility, last_seen_visibility, allow_username_lookup, notifications_enabled, notify_mentions, notify_private_chats, notify_groups, notify_sound, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
        ON CONFLICT (user_id)
        DO UPDATE SET
          theme = EXCLUDED.theme,
@@ -303,9 +308,14 @@ router.patch('/me/settings', async (req, res) => {
          phone_visibility = EXCLUDED.phone_visibility,
          last_seen_visibility = EXCLUDED.last_seen_visibility,
          allow_username_lookup = EXCLUDED.allow_username_lookup,
+         notifications_enabled = EXCLUDED.notifications_enabled,
+         notify_mentions = EXCLUDED.notify_mentions,
+         notify_private_chats = EXCLUDED.notify_private_chats,
+         notify_groups = EXCLUDED.notify_groups,
+         notify_sound = EXCLUDED.notify_sound,
          updated_at = NOW()
        RETURNING *`,
-      [req.user.id, theme, compactChats, sendOnEnter, showPreviews, accentColor, showFavoriteTab, showArchiveTab, phoneVisibility, lastSeenVisibility, allowUsernameLookup]
+      [req.user.id, theme, compactChats, sendOnEnter, showPreviews, accentColor, showFavoriteTab, showArchiveTab, phoneVisibility, lastSeenVisibility, allowUsernameLookup, notificationsEnabled, notifyMentions, notifyPrivateChats, notifyGroups, notifySound]
     );
     res.json({ settings: mapSettings(result.rows[0]) });
   } catch (error) {

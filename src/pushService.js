@@ -24,6 +24,7 @@
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('./db');
 const config = require('./config');
+const log = require('./logger');
 
 let webpush = null;
 let isConfigured = false;
@@ -50,7 +51,7 @@ function initPush() {
     isConfigured = true;
     return true;
   } catch (error) {
-    console.error('[push] failed to init web-push:', error.message);
+    log.error('[push] failed to init web-push:', error.message);
     return false;
   }
 }
@@ -205,7 +206,7 @@ async function sendPushToUser(userId, payload) {
           await query('DELETE FROM push_subscriptions WHERE id = $1', [row.id]);
           stats.removed += 1;
         } catch (delErr) {
-          console.error('[push] delete stale subscription failed:', delErr.message);
+          log.error('[push] delete stale subscription failed:', delErr.message);
         }
         return;
       }
@@ -219,7 +220,7 @@ async function sendPushToUser(userId, payload) {
         );
       } catch (_) { /* ignore */ }
       if (!config.isProduction) {
-        console.warn(`[push] send failed (status=${status}):`, reason);
+        log.warn(`[push] send failed (status=${status}):`, reason);
       }
     }
   }));
