@@ -128,7 +128,51 @@ async function replaceFolders(userId, folders) {
   }
 }
 
+router.post('/block', async (req, res) => {
+  try {
+    const userId = String(req.body.userId || '').trim();
+    if (!userId) return res.status(400).json({ error: 'Укажите ID пользователя' });
+    if (userId === req.user.id) return res.status(400).json({ error: 'Нельзя заблокировать самого себя' });
+    await query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.user.id, userId]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось заблокировать пользователя' });
+  }
+});
+
+router.delete('/block/:userId', async (req, res) => {
+  try {
+    await query('DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось разблокировать пользователя' });
+  }
+});
+
+router.get('/blocks', async (req, res) => {
+  try {
+    const result = await query('SELECT blocked_id FROM user_blocks WHERE blocker_id = $1', [req.user.id]);
+    res.json({ blockedIds: result.rows.map(row => row.blocked_id) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось получить список блокировок' });
+  }
+});
+
+router.get('/block-status/:userId', async (req, res) => {
+  try {
+    const result = await query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [req.user.id, req.params.userId]);
+    res.json({ blocked: result.rows.length > 0 });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Не удалось проверить статус блокировки' });
+  }
+});
+
 router.get('/public/:username', async (req, res) => {
+
   try {
     const username = normalizeUsername(req.params.username);
     const profile = await loadProfileByUsername(username, null);
