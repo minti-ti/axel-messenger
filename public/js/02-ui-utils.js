@@ -482,9 +482,162 @@ function notificationAllowed() {
   return 'Notification' in window && Notification.permission === 'granted';
 }
 
+/**
+ * Старая функция: только запрос разрешения у браузера. Оставлена для совместимости
+ * с in-app уведомлениями (maybeNotifyMessage), которые работают, пока вкладка
+ * открыта.
+ */
 function requestBrowserNotifications() {
   if (!('Notification' in window)) return Promise.resolve('unsupported');
   return Notification.requestPermission();
+}
+
+// ===================================================================
+// Web Push (background-уведомления через Service Worker)
+// ===================================================================
+
+// Кэшируем зарегистрированный SW, чтобы не дёргать navigator.serviceWorker
+// при каждом обращении.
+let __swRegistrationPromise = null;
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+async function ensureServiceWorker() {
+  if (!pushSupported()) return null;
+  if (!__swRegistrationPromise) {
+    __swRegistrationPromise = navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .catch((error) => {
+        __swRegistrationPromise = null;
+        console.warn('[push] SW registration failed:', error);
+        return null;
+      });
+  }
+  return __swRegistrationPromise;
+}
+
+// Сервер отдаёт ключ в base64url (RFC 7515). PushManager.subscribe требует
+// Uint8Array — конвертируем.
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const output = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i += 1) output[i] = rawData.charCodeAt(i);
+  return output;
+}
+
+/**
+ * Полная подписка: SW → permission → PushManager.subscribe → POST на сервер.
+ * Идемпотентна: если уже подписаны — переотправляем подписку на сервер
+ * (это лечит ситуацию «бэкенд почистил БД, а браузер думает, что подписан»).
+ *
+ * Возвращает: 'granted' | 'denied' | 'unsupported' | 'unconfigured' | 'error'
+ */
+async function enablePushNotifications() {
+  if (!pushSupported()) return 'unsupported';
+
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return permission; // 'denied' | 'default'
+
+    // 1. Service Worker
+    const reg = await ensureServiceWorker();
+    if (!reg) return 'error';
+
+    // 2. Получить public VAPID-ключ с сервера. Без него — ничего не делаем.
+    const keyRes = await fetch('/api/users/push/public-key');
+    if (keyRes.status === 503) return 'unconfigured';
+    if (!keyRes.ok) return 'error';
+    const { publicKey } = await keyRes.json();
+    if (!publicKey) return 'unconfigured';
+
+    // 3. Подписка через PushManager. Если уже подписаны на этот же ключ —
+    // вернётся существующая subscription без повторного запроса.
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) {
+      subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true, // обязательно для Web Push — каждый push должен приводить к видимому уведомлению
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
+
+    // 4. Отправить подписку на сервер. POST идемпотентен по endpoint.
+    const subJson = subscription.toJSON();
+    await api('/api/users/me/push-subscriptions', {
+      method: 'POST',
+      body: { subscription: subJson }
+    });
+
+    return 'granted';
+  } catch (error) {
+    console.warn('[push] enable failed:', error);
+    return 'error';
+  }
+}
+
+/**
+ * Отписка: убираем подписку из браузера и из БД.
+ * Возвращает true если что-то реально удалили.
+ */
+async function disablePushNotifications() {
+  if (!pushSupported()) return false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (!reg) return false;
+    const subscription = await reg.pushManager.getSubscription();
+    if (!subscription) return false;
+    const endpoint = subscription.endpoint;
+    await subscription.unsubscribe();
+    await api('/api/users/me/push-subscriptions', {
+      method: 'DELETE',
+      body: { endpoint }
+    }).catch(() => {});
+    return true;
+  } catch (error) {
+    console.warn('[push] disable failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Проверка: подписана ли эта вкладка/браузер на push (и есть ли валидная
+ * подписка в PushManager). Используется в настройках для показа статуса.
+ */
+async function getPushStatus() {
+  if (!pushSupported()) return { supported: false };
+  const permission = Notification.permission;
+  let subscribed = false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      subscribed = Boolean(sub);
+    }
+  } catch (_) { /* ignore */ }
+  return { supported: true, permission, subscribed };
+}
+
+// Обработчик сообщений от SW (например, клик по уведомлению).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    const data = event.data || {};
+    if (data.type === 'push:navigate' && data.url) {
+      try {
+        const u = new URL(data.url, window.location.origin);
+        const chatId = u.searchParams.get('chat');
+        if (chatId && typeof openChat === 'function') {
+          openChat(chatId).catch(() => {});
+          return;
+        }
+        window.location.href = u.pathname + u.search;
+      } catch (_) { /* ignore */ }
+    }
+    if (data.type === 'push:resubscribed') {
+      // Перерегистрируем подписку на сервере — у SW нет JWT-токена.
+      enablePushNotifications().catch(() => {});
+    }
+  });
 }
 
 async function copyText(value) {

@@ -99,5 +99,21 @@ module.exports = {
     endpoint: process.env.S3_ENDPOINT || undefined,
     accessKeyId: process.env.S3_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || ''
+  },
+  // --- Web Push (VAPID) ---
+  // Если ключи не заданы — push отключается, но приложение работает как раньше.
+  // Сгенерировать пару ключей можно командой:
+  //   node -e "console.log(require('web-push').generateVAPIDKeys())"
+  // Затем положить значения в Render Environment как VAPID_PUBLIC_KEY и
+  // VAPID_PRIVATE_KEY.
+  // VAPID_SUBJECT — обязательный mailto: или URL, RFC 8292. Используется
+  // браузерным push-сервисом, чтобы при проблемах с твоими push можно было
+  // тебя контактировать. Если не задан — берём APP_URL.
+  push: {
+    publicKey: process.env.VAPID_PUBLIC_KEY || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
+    subject: process.env.VAPID_SUBJECT || `mailto:admin@${(() => {
+      try { return new URL(APP_URL).hostname; } catch { return 'example.com'; }
+    })()}`
   }
 };

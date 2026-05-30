@@ -264,3 +264,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_username_unique ON chats ((LOWER(use
 -- Partial index для быстрой выборки НЕ удалённых сообщений чата.
 -- Критично для производительности при soft-delete на больших объёмах.
 CREATE INDEX IF NOT EXISTS idx_messages_active ON messages(chat_id, created_at DESC) WHERE deleted_at IS NULL;
+
+-- =====================================================================
+-- Web Push subscriptions (PushManager + VAPID).
+-- =====================================================================
+-- На одного пользователя может быть N подписок (по одной на каждый браузер/устройство).
+-- endpoint — уникальный URL, выдаваемый Push-сервисом браузера; по нему
+-- идентифицируется подписка целиком. p256dh и auth — публичный ключ устройства
+-- и аутентификационный секрет, нужны web-push для шифрования payload.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_error TEXT
+);
+
+-- endpoint глобально уникален — Push API гарантирует это. Если тот же
+-- endpoint вдруг придёт от другого пользователя (например, юзер сменил
+-- аккаунт в том же браузере) — старая запись будет перезаписана через
+-- ON CONFLICT в коде роута.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint
+  ON push_subscriptions(endpoint);
+
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id
+  ON push_subscriptions(user_id);

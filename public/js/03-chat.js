@@ -1547,8 +1547,12 @@ function openSettingsModal() {
         </div>
         <div class="form-card form-row">
           <div><strong>Уведомления браузера</strong></div>
-          <div class="notification-note">Текущий статус: ${'Notification' in window ? Notification.permission : 'не поддерживается браузером'}</div>
-          <button id="enableNotificationsBtn" type="button" class="secondary-btn">Включить уведомления</button>
+          <div class="notification-note">Разрешение: ${'Notification' in window ? Notification.permission : 'не поддерживается'}</div>
+          <div class="notification-note muted" id="pushStatusLabel">Push-уведомления (background): проверка…</div>
+          <div class="inline-actions">
+            <button id="enableNotificationsBtn" type="button" class="secondary-btn">Включить уведомления</button>
+            <button id="disablePushBtn" type="button" class="secondary-btn hidden">Выключить push на этом устройстве</button>
+          </div>
         </div>
         <div class="form-card form-row">
           <div><strong>Данные и синхронизация</strong></div>
@@ -1584,12 +1588,61 @@ function openSettingsModal() {
       showToast('Настройки сохранены');
     }
   );
+  // === Push: статус и переключение ===
+  const pushStatusLabel = document.getElementById('pushStatusLabel');
+  const disablePushBtn = document.getElementById('disablePushBtn');
+  const refreshPushStatusUI = async () => {
+    if (!pushStatusLabel) return;
+    const status = await getPushStatus();
+    if (!status.supported) {
+      pushStatusLabel.textContent = 'Push: браузер не поддерживает PushManager.';
+      if (disablePushBtn) disablePushBtn.classList.add('hidden');
+      return;
+    }
+    if (status.subscribed) {
+      pushStatusLabel.textContent = 'Push: ✅ включены на этом устройстве (приходят даже когда вкладка закрыта).';
+      if (disablePushBtn) disablePushBtn.classList.remove('hidden');
+    } else if (status.permission === 'denied') {
+      pushStatusLabel.textContent = 'Push: ❌ разрешение запрещено в настройках браузера. Разблокируйте уведомления для этого сайта.';
+      if (disablePushBtn) disablePushBtn.classList.add('hidden');
+    } else {
+      pushStatusLabel.textContent = 'Push: ⏸ не подписан. Нажми «Включить уведомления».';
+      if (disablePushBtn) disablePushBtn.classList.add('hidden');
+    }
+  };
+  refreshPushStatusUI().catch(() => {});
+
   const notifyBtn = document.getElementById('enableNotificationsBtn');
   if (notifyBtn) {
     notifyBtn.onclick = async () => {
-      const status = await requestBrowserNotifications();
-      showToast(status === 'granted' ? 'Уведомления включены' : 'Разрешение не выдано', status !== 'granted');
-      openSettingsModal();
+      notifyBtn.disabled = true;
+      try {
+        const status = await enablePushNotifications();
+        const messages = {
+          granted: 'Уведомления и push включены — приходить будут даже когда вкладка закрыта.',
+          denied: 'Разрешение запрещено в браузере.',
+          default: 'Разрешение не выдано.',
+          unsupported: 'Браузер не поддерживает Push API.',
+          unconfigured: 'Push не настроен на сервере (нет VAPID-ключей). Обратитесь к администратору.',
+          error: 'Не удалось подписаться. Попробуйте ещё раз.'
+        };
+        showToast(messages[status] || messages.error, status !== 'granted');
+      } finally {
+        notifyBtn.disabled = false;
+        refreshPushStatusUI().catch(() => {});
+      }
+    };
+  }
+  if (disablePushBtn) {
+    disablePushBtn.onclick = async () => {
+      disablePushBtn.disabled = true;
+      try {
+        const ok = await disablePushNotifications();
+        showToast(ok ? 'Push выключен на этом устройстве' : 'Подписки не было', !ok);
+      } finally {
+        disablePushBtn.disabled = false;
+        refreshPushStatusUI().catch(() => {});
+      }
     };
   }
   document.querySelectorAll('.accent-preset').forEach((button) => {

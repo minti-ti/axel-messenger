@@ -8,6 +8,13 @@ const { formatPublicUser, normalizeUsername, isValidUsername } = require('../uti
 const { onlineUsers } = require('../socket');
 const { saveUpload } = require('../storage');
 const { createModerationReportMessage, refreshModerationReportMessage, ensureModerationChat } = require('../moderationService');
+const {
+  isPushReady,
+  getPublicKey,
+  saveSubscription,
+  deleteSubscription,
+  listUserSubscriptions
+} = require('../pushService');
 const config = require('../config');
 
 const router = express.Router();
@@ -183,6 +190,19 @@ router.get('/public/:username', async (req, res) => {
     console.error(error);
     res.status(500).json({ error: 'Не удалось получить публичный профиль' });
   }
+});
+
+// Публичный VAPID-ключ. Эндпоинт доступен без авторизации, потому что
+// клиенту нужно знать ключ ещё ДО подписки (PushManager.subscribe требует
+// applicationServerKey прямо в момент вызова). Сам по себе публичный ключ
+// безопасно публиковать — без приватного ключа отправить push нельзя.
+// Если VAPID не сконфигурирован — отдаём 503, фронт это поймёт и не будет
+// предлагать пользователю подписываться.
+router.get('/push/public-key', (_req, res) => {
+  if (!isPushReady()) {
+    return res.status(503).json({ error: 'Push-уведомления не настроены на сервере' });
+  }
+  res.json({ publicKey: getPublicKey() });
 });
 
 router.use(authMiddleware);
@@ -688,6 +708,51 @@ router.get('/:userId', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Не удалось получить профиль пользователя' });
+  }
+});
+
+// =====================================================================
+// Управление push-подписками текущего пользователя
+// =====================================================================
+
+// Список своих подписок (для UI «Устройства с push»).
+router.get('/me/push-subscriptions', async (req, res) => {
+  try {
+    const items = await listUserSubscriptions(req.user.id);
+    res.json({ subscriptions: items, pushReady: isPushReady() });
+  } catch (error) {
+    console.error('[push] list error:', error.message);
+    res.status(500).json({ error: 'Не удалось получить подписки' });
+  }
+});
+
+// Создать/обновить подписку.
+// Тело: { subscription: {endpoint, keys: {p256dh, auth}} }
+// Если такой endpoint уже есть в БД (тот же браузер) — обновляем владельца и ключи.
+router.post('/me/push-subscriptions', async (req, res) => {
+  if (!isPushReady()) {
+    return res.status(503).json({ error: 'Push-уведомления не настроены на сервере' });
+  }
+  try {
+    const subscription = req.body?.subscription;
+    const ua = String(req.headers['user-agent'] || '');
+    const result = await saveSubscription(req.user.id, subscription, ua);
+    res.status(201).json({ ok: true, id: result.id });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Не удалось сохранить подписку' });
+  }
+});
+
+// Удалить свою подписку. Тело: { endpoint: "..." }
+router.delete('/me/push-subscriptions', async (req, res) => {
+  try {
+    const endpoint = String(req.body?.endpoint || '').trim();
+    await deleteSubscription(req.user.id, endpoint);
+    res.json({ ok: true });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Не удалось удалить подписку' });
   }
 });
 

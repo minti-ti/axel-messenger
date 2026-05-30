@@ -258,6 +258,22 @@ async function bootstrap() {
     await refreshChats({ showSkeleton: true });
     connectSocket();
     await handleInitialRoute();
+    // Регистрируем Service Worker в фоне. Если у пользователя уже выдано
+    // разрешение — он автоматически переподпишется (внутри enablePushNotifications
+    // PushManager.subscribe идемпотентен по applicationServerKey). Если нет —
+    // SW зарегистрирован, ждёт нажатия кнопки в настройках.
+    if (typeof ensureServiceWorker === 'function') {
+      ensureServiceWorker().then(() => {
+        if (typeof getPushStatus === 'function') {
+          getPushStatus().then((s) => {
+            if (s.supported && s.permission === 'granted' && !s.subscribed) {
+              // Подписка была отозвана push-сервисом — тихо переподписываемся.
+              enablePushNotifications().catch(() => {});
+            }
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
   } catch (error) {
     clearSession();
     showToast('Сессия истекла. Войдите снова.', true);

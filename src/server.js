@@ -15,6 +15,8 @@ const { attachSocket } = require('./socket');
 const { formatMessage, listChats } = require('./chatService');
 const { streamStoredFile, sanitizeStorageKey, buildFileUrlFromKey } = require('./storage');
 const { handleTelegramWebhook, setupWebhook } = require('./telegramBot');
+const { initPush, isPushReady } = require('./pushService');
+const { pushNotifyOfflineMembers } = require('./routes/chats/_helpers');
 
 const app = express();
 app.disable('x-powered-by');
@@ -56,7 +58,10 @@ if (config.isProduction) {
         objectSrc: ["'none'"],
         frameAncestors: ["'self'"],
         baseUri: ["'self'"],
-        formAction: ["'self'"]
+        formAction: ["'self'"],
+        // Нужно для регистрации /sw.js (Web Push Service Worker).
+        // Без явного worker-src некоторые браузеры падают в script-src.
+        workerSrc: ["'self'"]
       }
     },
     referrerPolicy: { policy: 'no-referrer' }
@@ -120,6 +125,15 @@ app.get('/styles.css', (_, res) => sendPublicAsset(res, 'styles.css', 'text/css'
 // отдельный alias не нужен.
 app.get('/public-profile.js', (_, res) => sendPublicAsset(res, 'public-profile.js', 'application/javascript'));
 app.get('/public-chat.js', (_, res) => sendPublicAsset(res, 'public-chat.js', 'application/javascript'));
+// Service Worker для Web Push. Должен отдаваться из КОРНЯ ('/sw.js'),
+// иначе его scope ограничится подпапкой, и pushSubscription из <main>-документа
+// не сможет к нему привязаться. Также важен Service-Worker-Allowed=/ — но т.к.
+// сам файл лежит в корне, scope наследуется автоматически.
+app.get('/sw.js', (_, res) => {
+  res.setHeader('Service-Worker-Allowed', '/');
+  res.setHeader('Cache-Control', 'no-cache'); // SW обновляется при каждом релизе
+  sendPublicAsset(res, 'sw.js', 'application/javascript');
+});
 
 // ---- Авторизованные раздачи файлов ----
 // Раньше /uploads/* и /files/* были полностью публичны, что позволяло
@@ -344,6 +358,8 @@ async function processScheduledMessages() {
       const formatted = await formatMessage(messageId);
       io.to(item.chat_id).emit('message:new', formatted);
       await emitChatRefresh(item.chat_id);
+      // Отложенные сообщения тоже шлём push-ом офлайн-участникам.
+      pushNotifyOfflineMembers(app, item.chat_id, formatted).catch(() => {});
     } catch (error) {
       // Если вставка упала — откатываем «выдачу», чтобы повторить позже.
       // Иначе сообщение будет считаться отправленным, а его нет.
@@ -357,6 +373,11 @@ async function processScheduledMessages() {
   try {
     await initDb();
     setupWebhook();
+    const pushEnabled = initPush();
+    if (!pushEnabled && config.isProduction) {
+      console.warn('[push] VAPID keys not configured — web push notifications disabled. ' +
+        'Generate: node -e "console.log(require(\'web-push\').generateVAPIDKeys())"');
+    }
     setInterval(() => { processScheduledMessages().catch((error) => console.error('Scheduled dispatch error', error)); }, 5000);
     server.listen(config.port, () => {
       // Стартовый лог: показывает что в каком режиме работает.
@@ -374,6 +395,7 @@ async function processScheduledMessages() {
         storage: config.storage.mode,
         s3Endpoint: config.storage.endpoint || null,
         telegramBot: Boolean(config.telegram.botToken && config.telegram.botToken !== 'your_bot_token_here'),
+        webPush: isPushReady(),
         dbHost,
         nodeVersion: process.version
       }));

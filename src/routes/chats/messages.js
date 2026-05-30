@@ -28,7 +28,8 @@ const {
   canModerateMessages,
   classifyAttachment,
   extractLinks,
-  emitChatRefresh
+  emitChatRefresh,
+  pushNotifyOfflineMembers
 } = require('./_helpers');
 
 const router = express.Router();
@@ -113,6 +114,8 @@ router.post('/messages/:messageId/comments', async (req, res) => {
     const message = await formatMessage(messageId);
     req.app.get('io').to(source.chat_id).emit('message:new', message);
     await emitChatRefresh(req.app, source.chat_id);
+    // Fire-and-forget: push офлайн-участникам.
+    pushNotifyOfflineMembers(req.app, source.chat_id, message).catch(() => {});
     res.status(201).json({ message });
   } catch (error) {
     console.error(error);
@@ -182,6 +185,12 @@ router.post('/messages/forward-bulk', async (req, res) => {
       req.app.get('io').to(targetChatId).emit('message:new', formatted);
     }
     await emitChatRefresh(req.app, targetChatId);
+    // Шлём push один раз на последний message — спам N уведомлений за bulk-forward
+    // (до 100 сообщений) был бы плохим UX. Receiver всё равно увидит весь пакет
+    // при заходе.
+    if (created.length) {
+      pushNotifyOfflineMembers(req.app, targetChatId, created[created.length - 1]).catch(() => {});
+    }
     res.status(201).json({ messages: created });
   } catch (error) {
     console.error(error);
@@ -342,6 +351,7 @@ router.post('/messages/:messageId/forward', async (req, res) => {
     const message = await formatMessage(newMessageId);
     req.app.get('io').to(targetChatId).emit('message:new', message);
     await emitChatRefresh(req.app, targetChatId);
+    pushNotifyOfflineMembers(req.app, targetChatId, message).catch(() => {});
     res.status(201).json({ message });
   } catch (error) {
     console.error(error);
@@ -579,6 +589,12 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
 
     createdMessages.forEach((message) => req.app.get('io').to(chatId).emit('message:new', message));
     await emitChatRefresh(req.app, chatId);
+    // Один push на сообщение (или альбом — последнее сообщение), не блокируя
+    // HTTP-ответ. Если у пользователя открыт чат — push не пошлётся, см.
+    // pushNotifyOfflineMembers (фильтрация по live WS-сессии).
+    if (createdMessages.length) {
+      pushNotifyOfflineMembers(req.app, chatId, createdMessages[createdMessages.length - 1]).catch(() => {});
+    }
     res.status(201).json({ message: createdMessages[0], messages: createdMessages });
   } catch (error) {
     console.error(error);

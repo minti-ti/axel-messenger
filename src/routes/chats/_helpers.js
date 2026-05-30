@@ -162,6 +162,101 @@ async function emitChatRefresh(app, chatId) {
   }
 }
 
+/**
+ * Шлёт web-push офлайн-участникам чата при новом сообщении.
+ *
+ * Что значит «офлайн»: у пользователя нет ни одного открытого Socket.IO
+ * соединения с этим инстансом сервера. Если он сейчас в браузере — он и так
+ * получит сообщение по WS, push дублировать не нужно. Если в браузере, но в
+ * другой вкладке/фоне — клиент сам решает, показывать ли in-app уведомление
+ * (через maybeNotifyMessage).
+ *
+ * Fire-and-forget: возвращает Promise, но вызывающий код может его не
+ * await'ить — мы не хотим блокировать HTTP-ответ на медленные push-сервисы.
+ *
+ * Не падает: все ошибки внутри pushService поглощаются.
+ *
+ * @param {Express.Application} app
+ * @param {string} chatId
+ * @param {{userId: string, content?: string, attachmentName?: string,
+ *          chatTitle?: string, chatType?: string, authorName?: string}} message
+ *   message — нормализованный объект из formatMessage(). Поля могут быть как
+ *   в camelCase (id, userId, content), так и в snake_case если зовут из
+ *   server.js до formatMessage.
+ */
+async function pushNotifyOfflineMembers(app, chatId, message) {
+  try {
+    // Ленивая загрузка, чтобы тесты на отдельные модули не тянули pg/web-push.
+    // eslint-disable-next-line global-require
+    const { isPushReady, sendPushToUsers } = require('../../pushService');
+    if (!isPushReady()) return;
+
+    // Берём участников чата кроме автора сообщения
+    const authorId = message?.userId || message?.user_id || null;
+    const members = await query(
+      `SELECT cm.user_id, COALESCE(us.notifications_enabled, TRUE) AS notifications_enabled,
+              COALESCE(us.notify_private_chats, TRUE) AS notify_private_chats,
+              COALESCE(us.notify_groups, TRUE) AS notify_groups
+       FROM chat_members cm
+       LEFT JOIN user_settings us ON us.user_id = cm.user_id
+       JOIN chats c ON c.id = cm.chat_id
+       WHERE cm.chat_id = $1
+         AND cm.user_id <> COALESCE($2, '')
+         AND (cm.muted_until IS NULL OR cm.muted_until <= NOW())`,
+      [chatId, authorId]
+    );
+    if (!members.rows.length) return;
+
+    // Тип чата для проверки настроек notify_private_chats / notify_groups
+    const chatRow = await query('SELECT type, title FROM chats WHERE id = $1', [chatId]);
+    const chat = chatRow.rows[0];
+    if (!chat) return;
+    const chatType = chat.type;
+    const chatTitle = message?.chatTitle || chat.title || (chatType === 'private' ? 'Личный чат' : '');
+
+    // Фильтруем по настройкам уведомлений + по «офлайнности» через Socket.IO room.
+    const io = app.get('io');
+    const recipients = [];
+    for (const row of members.rows) {
+      if (!row.notifications_enabled) continue;
+      if (chatType === 'private' && !row.notify_private_chats) continue;
+      if ((chatType === 'group' || chatType === 'channel') && !row.notify_groups) continue;
+
+      // Если у пользователя есть открытое WS-соединение — пропускаем push.
+      // У нас на каждого юзера комната `user:<id>`.
+      if (io && io.sockets && io.sockets.adapter) {
+        const room = io.sockets.adapter.rooms.get(`user:${row.user_id}`);
+        if (room && room.size > 0) continue;
+      }
+      recipients.push(row.user_id);
+    }
+    if (!recipients.length) return;
+
+    const authorName = message?.authorName || message?.author?.displayName || '';
+    const text = message?.content || (message?.attachmentName ? `📎 ${message.attachmentName}` : '');
+
+    const title = chatType === 'private'
+      ? (authorName || 'Новое сообщение')
+      : (chatTitle ? `${authorName ? authorName + ' · ' : ''}${chatTitle}` : (authorName || 'Новое сообщение'));
+
+    const payload = {
+      title,
+      body: text || 'Новое сообщение',
+      url: `/?chat=${encodeURIComponent(chatId)}`,
+      tag: `chat:${chatId}`
+    };
+
+    // Fire-and-forget. await нужен, чтобы исключения внутри не превратились
+    // в unhandled rejection — сама функция sendPushToUsers их уже глотает.
+    await sendPushToUsers(recipients, payload);
+  } catch (error) {
+    // Push не должен ронять отправку сообщения. Просто логируем.
+    if (!require('../../config').isProduction) {
+      console.warn('[push] notify offline members failed:', error.message);
+    }
+  }
+}
+
 async function resolveUsers({ memberIds = [], memberPhones = [], memberUsernames = [] }) {
   const ids = [...new Set(memberIds)].filter(Boolean);
   const phones = [...new Set(memberPhones.map(normalizePhone).filter(Boolean))];
@@ -306,6 +401,7 @@ module.exports = {
   fetchPublicChatByUsername,
   ensureEncryptionKey,
   emitChatRefresh,
+  pushNotifyOfflineMembers,
   validateInputLength,
   sanitizeInput
 };

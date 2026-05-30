@@ -124,10 +124,43 @@ npm test
 ## 🗺 Roadmap
 
 - [ ] Полноценная реализация Signal Protocol (E2E)
-- [ ] Push-уведомления (Web Push / FCM)
+- [x] Push-уведомления (Web Push + VAPID)
 - [ ] Голосовые и видеозвонки (WebRTC)
 - [ ] Мобильное приложение (React Native / Flutter)
 - [x] Базовые тесты и CI/CD
+
+## 🔔 Push-уведомления
+
+Приложение поддерживает background push-уведомления через стандартный
+Web Push API (никаких FCM, никаких внешних SDK — только Service Worker
++ VAPID).
+
+### Включение на сервере
+
+1. Один раз сгенерируй VAPID-пару:
+   ```bash
+   node -e "console.log(require('web-push').generateVAPIDKeys())"
+   ```
+2. В Render → Environment добавь:
+   - `VAPID_PUBLIC_KEY=...`
+   - `VAPID_PRIVATE_KEY=...`
+   - `VAPID_SUBJECT=mailto:you@example.com` (опц.)
+3. Передеплой. В стартовом логе сервера появится `"webPush": true`.
+
+Если ключи не заданы — push просто выключен. Эндпоинт `/api/users/push/public-key`
+вернёт 503, фронт это поймёт и не будет предлагать подписку.
+
+### Как это работает
+
+- При включении в настройках браузер запрашивает разрешение, регистрирует
+  `/sw.js` и подписывается через `PushManager` с `applicationServerKey`.
+- Сервер сохраняет подписку (`endpoint + keys`) в таблицу `push_subscriptions`.
+- При новом сообщении сервер ищет участников чата БЕЗ открытого WebSocket
+  (т.е. реально офлайн), фильтрует по их настройкам уведомлений (`notify_*`)
+  и шлёт зашифрованный payload через `web-push`.
+- Service Worker показывает уведомление; клик возвращает пользователя
+  в нужный чат.
+- Если push-сервис вернул 404/410 — подписка автоматически удаляется из БД.
 
 ## 🤝 Вклад
 
