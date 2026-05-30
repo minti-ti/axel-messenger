@@ -13,9 +13,22 @@ const needsSsl =
     config.databaseUrl || ''
   );
 
+// По умолчанию у managed-Postgres (Neon/Supabase/RDS) валидные публичные
+// сертификаты, но узлы ротируются и встроенный CA-bundle не всегда успевает,
+// поэтому проверка цепочки отключена. Это оставляет теоретический MITM.
+// Чтобы включить строгую проверку — задайте DB_SSL_STRICT=true и (по желанию)
+// положите CA-сертификат провайдера в DB_SSL_CA (PEM-строка).
+const sslStrict = String(process.env.DB_SSL_STRICT || 'false') === 'true';
+const sslConfig = needsSsl
+  ? {
+      rejectUnauthorized: sslStrict,
+      ...(process.env.DB_SSL_CA ? { ca: process.env.DB_SSL_CA } : {})
+    }
+  : false;
+
 const pool = new Pool({
   connectionString: config.databaseUrl,
-  ssl: needsSsl ? { rejectUnauthorized: false } : false,
+  ssl: sslConfig,
   // Разумные таймауты на free-планах (Neon может «просыпаться» 1-2 сек)
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,

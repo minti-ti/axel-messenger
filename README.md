@@ -2,7 +2,7 @@
 
 Современный мессенджер с поддержкой личных чатов, групп, каналов и сквозного шифрования.
 
-![Axel Messenger](https://via.placeholder.com/800x400/0f172a/64748b?text=Axel+Messenger)
+<h1 align="center">💬 Axel Messenger</h1>
 
 ## ✨ Возможности
 

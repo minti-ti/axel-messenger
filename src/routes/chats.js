@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -26,7 +26,7 @@ const userMessageBuckets = new Map();
 const suspiciousActivityLog = new Map();
 const RATE_LIMIT_MAX_USERS = 5000;      // ╨╖╨░╤Й╨╕╤В╨░ ╨╛╤В ╤Г╤В╨╡╤З╨║╨╕ ╨┐╨░╨╝╤П╤В╨╕
 const SUSPICIOUS_MAX_KEYS = 2000;
-const { encryptMessage, decryptMessage, generateEncryptionKey } = require('../encryption');
+const { generateEncryptionKey } = require('../encryption');
 
 // ╨Я╨╡╤А╨╕╨╛╨┤╨╕╤З╨╡╤Б╨║╨╕ ╤З╨╕╤Б╤В╨╕╨╝ ╤Б╤В╨░╤А╤Л╨╡ ╨╖╨░╨┐╨╕╤Б╨╕ (╤А╨░╨╖ ╨▓ 10 ╨╝╨╕╨╜╤Г╤В).
 // ╨Э╨╡ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╨╝ setInterval ╨╜╨░ require-╤Н╤В╨░╨┐╨╡, ╤З╤В╨╛╨▒╤Л ╨╜╨╡ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╤В╤М ╨▓╤Л╤Е╨╛╨┤ ╨┐╤А╨╛╤Ж╨╡╤Б╤Б╨░ ╨▓ ╤В╨╡╤Б╤В╨░╤Е.
@@ -274,7 +274,7 @@ router.get('/search/messages', async (req, res) => {
        FROM messages m
        JOIN chat_members cm ON cm.chat_id = m.chat_id AND cm.user_id = $1
        JOIN chats c ON c.id = m.chat_id
-       WHERE m.deleted_at IS NULL AND LOWER(m.content) LIKE LOWER($2)
+       WHERE m.deleted_at IS NULL AND m.is_encrypted = FALSE AND LOWER(m.content) LIKE LOWER($2)
        ORDER BY m.created_at DESC
        LIMIT 100`,
       [req.user.id, `%${q}%`]
@@ -1226,19 +1226,18 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
     const canCreateAlbum = files.length > 1 && files.every((file) => String(file.mimetype || '').startsWith('image/'));
     const albumId = canCreateAlbum ? uuidv4() : null;
 
-    // ╨Я╨╛╨╗╤Г╤З╨░╨╡╨╝ ╤В╨╕╨┐ ╤З╨░╤В╨░ ╨┤╨╗╤П ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ ╤И╨╕╤Д╤А╨╛╨▓╨░╨╜╨╕╤П
-    const chatResult = await query('SELECT type FROM chats WHERE id = $1', [chatId]);
-    const chatType = chatResult.rows[0]?.type;
-    
-    // ╨Ф╨╗╤П ╨┐╤А╨╕╨▓╨░╤В╨╜╤Л╤Е ╤З╨░╤В╨╛╨▓ ╨▓╨║╨╗╤О╤З╨░╨╡╨╝ ╤И╨╕╤Д╤А╨╛╨▓╨░╨╜╨╕╨╡
-    let encryptionKey = null;
-    const isEncrypted = chatType === 'private';
-    if (isEncrypted) {
-      encryptionKey = await ensureEncryptionKey(chatId, chatType);
-      if (content) {
-        content = encryptMessage(content, encryptionKey);
-      }
-    }
+    // Сообщения сохраняются в открытом виде.
+    //
+    // Раньше приватные чаты «шифровались» на сервере ключом из той же БД
+    // (encryption_keys). Это не давало реальной защиты (админ/дамп БД = и ключ,
+    // и шифротекст) и при этом ЛОМАЛО чтение: decryptMessage на сервере не
+    // вызывался, а клиент не получал ключ — поэтому сообщения отображались как
+    // «[Зашифрованное сообщение]».
+    //
+    // Старые зашифрованные записи по-прежнему читаются: chatService.js
+    // расшифровывает их на лету по флагу is_encrypted (decryptLegacyRows).
+    // Для настоящей приватности нужен полноценный E2E (ключи на клиенте).
+    const isEncrypted = false;
 
     if (!files.length) {
       const messageId = uuidv4();
