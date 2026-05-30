@@ -1635,3 +1635,99 @@ html { overflow-x: hidden; }
     user-select: text;
   }
 }
+
+
+/* Кнопка «вниз» при прокрутке */
+.scroll-down-btn {
+  position: absolute;
+  bottom: 90px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--panel) 95%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 20px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  z-index: 100;
+  box-shadow: var(--shadow);
+  transition: opacity 0.2s, transform 0.2s;
+  backdrop-filter: blur(8px);
+}
+.scroll-down-btn.hidden { opacity: 0; pointer-events: none; transform: translateY(10px); }
+.scroll-down-btn:hover { background: var(--primary-soft); border-color: var(--primary); }
+.scroll-down-btn::after {
+  content: attr(data-badge);
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--danger);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  padding: 0 5px;
+}
+.scroll-down-btn[data-badge=""]::after { display: none; }
+
+/* Markdown стили */
+.md-code {
+  background: rgba(255,255,255,0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+.md-codeblock {
+  background: rgba(0,0,0,0.25);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.88em;
+  overflow-x: auto;
+  margin: 6px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+body[data-theme='light'] .md-code { background: rgba(0,0,0,0.06); }
+body[data-theme='light'] .md-codeblock { background: rgba(0,0,0,0.05); }
+.md-spoiler {
+  background: var(--muted);
+  color: transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s;
+}
+.md-spoiler.revealed {
+  background: rgba(255,255,255,0.08);
+  color: inherit;
+}
+body[data-theme='light'] .md-spoiler.revealed { background: rgba(0,0,0,0.06); }
+
+/* Кастомные обои чата */
+.chat-panel[data-wallpaper="gradient-1"] {
+  background: linear-gradient(135deg, #0b1220 0%, #1a1040 50%, #0b1220 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-2"] {
+  background: linear-gradient(180deg, #0d1b2a 0%, #1b2838 50%, #0d1b2a 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-3"] {
+  background: linear-gradient(135deg, #0a192f 0%, #20123a 50%, #0a192f 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-4"] {
+  background: linear-gradient(180deg, #1a0a2e 0%, #16213e 50%, #0f3460 100%) !important;
+}
+.chat-panel[data-wallpaper="gradient-5"] {
+  background: linear-gradient(135deg, #0c1618 0%, #1a3a2a 50%, #0c1618 100%) !important;
+}
+.chat-panel[data-wallpaper="none"] {
+  background: var(--bg) !important;
+}

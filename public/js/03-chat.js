@@ -812,7 +812,7 @@ function renderMessages() {
         </div>` : ''}
         ${message.forwardedFrom ? `<button type="button" class="reply-preview user-link forwarded-link" data-forward-user-id="${message.forwardedFrom.userId}"><strong>Переслано от ${escapeHtml(userLabel(message.forwardedFrom))}</strong>${message.forwardedFrom.username ? `<br />@${escapeHtml(message.forwardedFrom.username)}` : ''}</button>` : ''}
         ${message.replyPreview ? `<button type="button" class="reply-preview jump-reply" data-reply-id="${message.replyToMessageId}"><strong>${escapeHtml(message.replyPreview.authorName)}</strong><br />${escapeHtml(message.replyPreview.content || message.replyPreview.attachmentName || 'Вложение')}</button>` : ''}
-        <div class="message-content ${isStickerContent(message.content) ? 'sticker-message' : ''}">${isStickerContent(message.content) ? escapeHtml(normalizeStickerDisplay(message.content)) : escapeHtml(message.content || '')}</div>
+        <div class="message-content ${isStickerContent(message.content) ? 'sticker-message' : ''}">${isStickerContent(message.content) ? escapeHtml(normalizeStickerDisplay(message.content)) : (typeof renderMarkdown === 'function' ? renderMarkdown(escapeHtml(message.content || '')) : escapeHtml(message.content || ''))}</div>
         ${albumMessages ? albumGrid : attachmentMarkup(message)}
         ${state.currentChat.type === 'channel' && state.currentChat.restrictions?.commentsEnabled && !message.replyToMessageId ? `<button type="button" class="comments-link" data-comments-for="${message.id}">💬 Комментарии ${message.commentsCount ? `(${message.commentsCount})` : ''}</button>` : ''}
         <div class="reactions">${grouped.map((item) => `<button type="button" class="reaction-chip ${item.mine ? 'mine' : ''}" data-emoji="${item.emoji}">${item.emoji} ${item.count}</button>`).join('')}</div>
@@ -1034,6 +1034,30 @@ function renderMessages() {
   if (shouldScroll) {
     el.messageList.scrollTop = el.messageList.scrollHeight;
   }
+
+  // Кнопка «вниз» — показывается когда прокрутили вверх
+  let scrollDownBtn = document.getElementById('scrollDownBtn');
+  if (!scrollDownBtn) {
+    scrollDownBtn = document.createElement('button');
+    scrollDownBtn.id = 'scrollDownBtn';
+    scrollDownBtn.className = 'scroll-down-btn hidden';
+    scrollDownBtn.innerHTML = '↓';
+    scrollDownBtn.onclick = () => {
+      el.messageList.scrollTop = el.messageList.scrollHeight;
+      scrollDownBtn.classList.add('hidden');
+    };
+    el.messageList.parentElement.appendChild(scrollDownBtn);
+  }
+
+  const updateScrollBtn = () => {
+    const atBottom = el.messageList.scrollTop >= el.messageList.scrollHeight - el.messageList.clientHeight - 200;
+    scrollDownBtn.classList.toggle('hidden', atBottom);
+    // Показать бейдж непрочитанных
+    const unread = state.currentChat ? (Number(state.currentChat.unreadCount) || 0) : 0;
+    scrollDownBtn.dataset.badge = unread > 0 && !atBottom ? unread : '';
+  };
+  el.messageList.onscroll = updateScrollBtn;
+  updateScrollBtn();
 }
 
 function renderReplyBox() {
@@ -1079,6 +1103,18 @@ function renderFilterButtons() {
   });
 }
 
+
+// PWA Badge: показываем количество непрочитанных на иконке приложения
+function updateAppBadge() {
+  if (!('setAppBadge' in navigator)) return;
+  const total = state.chats.reduce((sum, chat) => sum + (Number(chat.unreadCount) || 0), 0);
+  if (total > 0) {
+    navigator.setAppBadge(total).catch(() => {});
+  } else {
+    navigator.clearAppBadge().catch(() => {});
+  }
+}
+
 function render() {
   const loggedIn = Boolean(state.token && state.user);
   el.authScreen.classList.toggle('hidden', loggedIn);
@@ -1100,6 +1136,7 @@ function render() {
   renderPendingFiles();
   renderMessages();
   renderReplyBox();
+  updateAppBadge();
 }
 
 async function refreshChats({ showSkeleton = false } = {}) {
@@ -1561,6 +1598,17 @@ function openSettingsModal() {
           </div>
         </div>
         <div class="form-card form-row">
+          <div><strong>Фон чата</strong></div>
+          <div class="inline-actions" style="flex-wrap:wrap;gap:8px;">
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="none" style="background:#0b1220;width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Без фона"></button>
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-1" style="background:linear-gradient(135deg,#0b1220,#1a1040);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Пурпур"></button>
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-2" style="background:linear-gradient(180deg,#0d1b2a,#1b2838);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Ночь"></button>
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-3" style="background:linear-gradient(135deg,#0a192f,#20123a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Индиго"></button>
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-4" style="background:linear-gradient(180deg,#1a0a2e,#16213e,#0f3460);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Космос"></button>
+            <button type="button" class="accent-preset wallpaper-btn" data-wp="gradient-5" style="background:linear-gradient(135deg,#0c1618,#1a3a2a);width:48px;height:48px;border-radius:12px;border:2px solid var(--border);" title="Лес"></button>
+          </div>
+        </div>
+        <div class="form-card form-row">
           <div><strong>Данные и синхронизация</strong></div>
           <div class="inline-actions">
             <button id="manageFoldersBtn" type="button" class="secondary-btn">Папки чатов</button>
@@ -1672,11 +1720,26 @@ function openSettingsModal() {
       }
     };
   }
-  document.querySelectorAll('.accent-preset').forEach((button) => {
+  document.querySelectorAll('.accent-preset:not(.wallpaper-btn)').forEach((button) => {
     button.onclick = () => {
       const input = document.getElementById('accentColorInput');
       if (input) input.value = button.dataset.accent;
     };
+  });
+  // Обои чата
+  document.querySelectorAll('.wallpaper-btn').forEach((button) => {
+    button.onclick = () => {
+      const wp = button.dataset.wp;
+      localStorage.setItem('chatWallpaper', wp);
+      applyWallpaper();
+      document.querySelectorAll('.wallpaper-btn').forEach(b => b.style.borderColor = 'var(--border)');
+      button.style.borderColor = 'var(--primary)';
+      showToast('Фон чата обновлён');
+    };
+    // Подсветить текущий
+    if (button.dataset.wp === (localStorage.getItem('chatWallpaper') || '')) {
+      button.style.borderColor = 'var(--primary)';
+    }
   });
   const manageFoldersBtn = document.getElementById('manageFoldersBtn');
   if (manageFoldersBtn) manageFoldersBtn.onclick = () => openFoldersModal();

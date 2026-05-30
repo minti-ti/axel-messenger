@@ -14,6 +14,17 @@
  */
 
 
+
+// Обои чата — применяем data-wallpaper на .chat-panel
+function applyWallpaper() {
+  const wp = localStorage.getItem('chatWallpaper') || '';
+  const panel = document.querySelector('.chat-panel');
+  if (panel) {
+    if (wp) panel.dataset.wallpaper = wp;
+    else delete panel.dataset.wallpaper;
+  }
+}
+
 function showToast(message, isError = false) {
   el.toast.textContent = message;
   el.toast.style.borderColor = isError ? 'rgba(239,83,80,0.45)' : 'rgba(77,163,255,0.35)';
@@ -393,6 +404,7 @@ function applySettings() {
   document.body.style.setProperty('--selection-accent', rgbaFromHex(accent, 0.26));
   document.body.style.setProperty('--chat-bg-glow', rgbaFromHex(accent, 0.11));
   document.body.style.setProperty('--chat-bg-soft', rgbaFromHex(accent, 0.05));
+  if (typeof applyWallpaper === 'function') applyWallpaper();
 }
 
 function saveFolders() {
@@ -1029,6 +1041,30 @@ function shiftImageViewer(direction) {
  * Поэтому используем SW showNotification если доступен, иначе fallback
  * на обычный new Notification (для старых десктопных браузеров).
  */
+
+/**
+ * Простой Markdown: *жирный*, _курсив_, `код`, ```блок кода```, ~~зачёркнутый~~, ||спойлер||
+ * Работает поверх уже экранированного HTML (после escapeHtml).
+ */
+function renderMarkdown(html) {
+  if (!html) return html;
+  return html
+    // ```code block``` (многострочный)
+    .replace(/```([\s\S]*?)```/g, '<pre class="md-codeblock">$1</pre>')
+    // `inline code`
+    .replace(/`([^`]+)`/g, '<code class="md-code">$1</code>')
+    // **bold** или *bold*
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<![\w*])\*(.+?)\*(?![\w*])/g, '<strong>$1</strong>')
+    // __italic__ или _italic_
+    .replace(/__(.+?)__/g, '<em>$1</em>')
+    .replace(/(?<![\w_])_(.+?)_(?![\w_])/g, '<em>$1</em>')
+    // ~~strikethrough~~
+    .replace(/~~(.+?)~~/g, '<del>$1</del>')
+    // ||spoiler||
+    .replace(/\|\|(.+?)\|\|/g, '<span class="md-spoiler" onclick="this.classList.toggle('revealed')">$1</span>');
+}
+
 function maybeNotifyMessage(message) {
   if (!state.settings.notificationsEnabled) return;
   if (!notificationAllowed()) return;
