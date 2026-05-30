@@ -7,6 +7,7 @@ const { query } = require('../db');
 const { authMiddleware } = require('../auth');
 const config = require('../config');
 const { normalizePhone, normalizeUsername, isValidUsername, formatPublicUser } = require('../utils');
+const { isValidUUID, sanitizeString } = require('../validators');
 const {
   isChatMember,
   getChatById,
@@ -279,6 +280,16 @@ async function fetchPublicChatByUsername(username, viewerUserId) {
 
 router.use(authMiddleware);
 
+// Валидация UUID-параметров на уровне роутера
+router.param('chatId', (req, res, next, val) => {
+  if (!isValidUUID(val)) return res.status(400).json({ error: 'Некорректный идентификатор чата' });
+  next();
+});
+router.param('messageId', (req, res, next, val) => {
+  if (!isValidUUID(val)) return res.status(400).json({ error: 'Некорректный идентификатор сообщения' });
+  next();
+});
+
 router.get('/search/messages', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();
@@ -468,6 +479,12 @@ router.post('/private', async (req, res) => {
       const savedChatId = await findOrCreateSavedChat(req.user.id);
       const savedChat = await getChatById(savedChatId, req.user.id);
       return res.json({ chat: savedChat });
+    }
+
+    // Проверка блокировки: если targetUserId заблокировал текущего пользователя — чат не создаём.
+    const blockedResult = await query('SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2', [targetUserId, req.user.id]);
+    if (blockedResult.rows[0]) {
+      return res.status(403).json({ error: 'Пользователь ограничил возможность писать ему' });
     }
 
     const chatId = await findOrCreatePrivateChat(req.user.id, targetUserId);
@@ -1328,6 +1345,7 @@ router.post('/:chatId/messages', upload.array('attachment', 10), async (req, res
     const files = Array.isArray(req.files) ? req.files : [];
     if (!content && !files.length) return res.status(400).json({ error: '╨б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨┐╤Г╤Б╤В╨╛╨╡' });
     if (isRateLimited(req.user.id)) return res.status(429).json({ error: '╨б╨╗╨╕╤И╨║╨╛╨╝ ╤З╨░╤Б╤В╨░╤П ╨╛╤В╨┐╤А╨░╨▓╨║╨░ ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╣. ╨Я╨╛╨┐╤А╨╛╨▒╤Г╨╣╤В╨╡ ╤З╤Г╤В╤М ╨┐╨╛╨╖╨╢╨╡.' });
+    if (content.length > 10000) return res.status(400).json({ error: "Сообщение слишком длинное (max 10000 символов)" });
 
     const createdMessages = [];
     const canCreateAlbum = files.length > 1 && files.every((file) => String(file.mimetype || '').startsWith('image/'));

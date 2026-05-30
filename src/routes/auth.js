@@ -5,6 +5,7 @@ const { query } = require('../db');
 const { signToken, authMiddleware } = require('../auth');
 const { sendLoginCode } = require('../sms');
 const { normalizePhone, makeCode, formatPublicUser } = require('../utils');
+const { isValidPhone, isValidCode, sanitizeString } = require('../validators');
 const config = require('../config');
 const { ensureSuperadminModerationMembership } = require('../moderationService');
 
@@ -33,7 +34,7 @@ async function ensureSuperadmin(user) {
 router.post('/request-code', async (req, res) => {
   try {
     const phone = normalizePhone(req.body.phone);
-    if (!phone || phone.length < 8) {
+    if (!isValidPhone(phone)) {
       return res.status(400).json({ error: 'Введите корректный номер телефона' });
     }
 
@@ -96,10 +97,13 @@ router.post('/verify-code', async (req, res) => {
   try {
     const phone = normalizePhone(req.body.phone);
     const code = String(req.body.code || '').trim();
-    const displayNameInput = String(req.body.displayName || '').trim();
+    const displayNameInput = sanitizeString(req.body.displayName || '', 120);
 
-    if (!phone || !code) {
-      return res.status(400).json({ error: 'Укажите телефон и код' });
+    if (!isValidPhone(phone)) {
+      return res.status(400).json({ error: 'Введите корректный номер телефона' });
+    }
+    if (!isValidCode(code)) {
+      return res.status(400).json({ error: 'Укажите корректный код подтверждения' });
     }
 
     const codeResult = await query('SELECT * FROM login_codes WHERE phone = $1', [phone]);
@@ -181,6 +185,11 @@ router.get('/sessions', authMiddleware, async (req, res) => {
 router.delete('/sessions/:sessionId', authMiddleware, async (req, res) => {
   await query('UPDATE user_sessions SET revoked_at = NOW() WHERE id = $1 AND user_id = $2', [req.params.sessionId, req.user.id]);
   res.json({ ok: true });
+});
+
+router.post('/logout-all', authMiddleware, async (req, res) => {
+  await query('UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND id <> $2', [req.user.id, req.sessionId]);
+  res.json({ ok: true, revokedAll: true });
 });
 
 module.exports = router;

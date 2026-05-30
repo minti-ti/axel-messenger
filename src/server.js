@@ -69,6 +69,26 @@ if (config.isProduction) {
     referrerPolicy: { policy: 'no-referrer' }
   }));
 }
+// Простой JSON request logger. В production записывает метод, путь, статус и время.
+// Не использует внешних зависимостей — замена для pino на текущем этапе.
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    if (config.isProduction) {
+      console.log(JSON.stringify({
+        event: 'request',
+        method: req.method,
+        path: req.path,
+        status: res.statusCode,
+        durationMs: duration,
+        ip: req.ip
+      }));
+    }
+  });
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
